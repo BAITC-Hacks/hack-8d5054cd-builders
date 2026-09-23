@@ -6,6 +6,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
+from urllib.parse import urlsplit
 
 
 CARD_FIELDS: dict[str, str] = {
@@ -32,6 +33,22 @@ def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+def is_valid_prototype_url(value: str) -> bool:
+    if not value:
+        return True
+    if any(char.isspace() for char in value):
+        return False
+    try:
+        parsed = urlsplit(value)
+        return (
+            parsed.scheme in {"http", "https"} and bool(parsed.hostname)
+            and parsed.username is None and parsed.password is None
+            and (parsed.port is None or 0 < parsed.port <= 65535)
+        )
+    except ValueError:
+        return False
+
+
 @dataclass
 class TaskCard:
     title: str = ""
@@ -49,6 +66,8 @@ class TaskCard:
     status: str = "draft"
     created_at: str = field(default_factory=utc_now)
     rating: int = 0
+    topic: str = "Другое"
+    confirmed_at: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -62,6 +81,8 @@ class TaskCard:
             status=raw.get("status", "draft"),
             created_at=raw.get("created_at") or utc_now(),
             rating=int(raw.get("rating", 0) or 0),
+            topic=raw.get("topic") or "Другое",
+            confirmed_at=raw.get("confirmed_at", ""),
         )
         return cls(**known)
 
@@ -73,9 +94,12 @@ class Application:
     idea: str
     plan: str
     prototype_url: str = ""
+    team_id: str = ""
     id: str = field(default_factory=lambda: make_id("application"))
     status: str = "pending"
     created_at: str = field(default_factory=utc_now)
+    # At the end to preserve older positional arguments and saved proposals.
+    timeline: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
