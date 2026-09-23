@@ -13,29 +13,40 @@ from src.catalog import ALL_READINESS, ALL_TOPICS, READINESS_LEVELS, TOPICS, cat
 from src.models import CARD_FIELDS, Application, TaskCard, is_valid_prototype_url, make_id, utc_now
 from src.rating import calculate_rating
 from src.progress_ui import render_business_progress, render_team_applications, render_team_dashboard, render_team_projects
+from src.ui import apply_ui, page_header, status_badge, stepper, summary_card
 
 
 ROOT = Path(__file__).resolve().parent
 SEED_PATH = ROOT / "data" / "seed.json"
+FIELD_LABELS = {
+    "title": "Как назовём задачу?", "context": "Что происходит сейчас?",
+    "need": "Что нужно изменить?", "users": "Для кого решение?",
+    "data": "Какие материалы есть?", "constraints": "Какие есть ограничения?",
+    "expected_result": "Что команда должна подготовить?",
+    "success_criteria": "Как вы поймёте, что задача решена?",
+    "contact": "С кем связаться?", "collaboration_format": "Как будете работать с командой?",
+}
+FIELD_EXAMPLES = {
+    "title": "Например, упростить оформление заказа",
+    "context": "В каком процессе возникает проблема и что вы наблюдаете?",
+    "need": "Опишите одно изменение, которое будет полезно вашему бизнесу.",
+    "users": "Например, покупатели, менеджеры или преподаватели",
+    "data": "Таблицы, примеры, документы, доступы. Если материалов нет — так и напишите.",
+    "constraints": "Сроки, технологии, доступы или другие границы работы",
+    "expected_result": "Например, прототип, аналитический отчёт или работающий сервис",
+    "success_criteria": "Что будете проверять при приёмке? По возможности укажите измеримый показатель.",
+    "contact": "Имя и удобный канал связи с представителем бизнеса",
+    "collaboration_format": "Как часто сможете отвечать на вопросы и обсуждать результаты?",
+}
 
 st.set_page_config(
-    page_title="HackAlem AI · Практикум",
-    page_icon="🧩",
+    page_title="Практикум · HackAlem",
+    page_icon="🌱",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
-st.markdown(
-    """
-    <style>
-      .block-container {padding-top: 2rem; padding-bottom: 3rem; max-width: 1240px;}
-      [data-testid="stMetricValue"] {font-weight: 750;}
-      .stProgress > div > div > div > div {background-color: #14b8a6;}
-      div[data-testid="stAlert"] {border-radius: 12px;}
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
+apply_ui()
 
 
 def _load_seed() -> dict[str, Any]:
@@ -82,7 +93,7 @@ def _migrate_state() -> None:
 
 def _show_ai_mode() -> None:
     settings = get_settings()
-    with st.sidebar.expander("AI и подключение", expanded=False):
+    with st.sidebar.expander("Настройки помощника", expanded=False):
         if st.button("Перечитать .env", key="reload_ai_settings"):
             st.session_state.ai_provider = "demo" if settings["demo"] else settings["provider"]
             st.session_state.pop("connection_result", None)
@@ -115,13 +126,18 @@ def _show_ai_result(result: dict[str, Any]) -> None:
     mode = result.get("mode", "demo")
     if mode == "demo":
         if result.get("reason") == "demo_requested":
-            st.info("Используется локальный сценарий без обращения к API.")
+            st.caption("Режим примера · сведения собраны локально, без AI.")
         else:
-            st.warning("Использована локальная сборка: доступный AI не вернул проверенный результат.")
+            st.warning("Помощник сейчас недоступен. Мы сохранили ваши сведения — можно продолжить и заполнить карточку вручную.")
     else:
-        st.success(f"{PROVIDER_LABELS[mode]} · {result.get('model', '')}: ответ проверен по исходному тексту.")
-    for attempt in result.get("attempts", []):
-        st.caption(f"{PROVIDER_LABELS[attempt['provider']]}: {ERROR_LABELS[attempt['reason']]}")
+        st.caption("Помощник использовал сведения из вашего текста. Перед публикацией проверьте их.")
+    with st.expander("Как получен результат"):
+        if mode != "demo":
+            st.caption(f"{PROVIDER_LABELS[mode]} · {result.get('model', '')}. Цитаты проверены по исходному тексту.")
+        else:
+            st.caption("Локальная сборка использует ваш текст и ответы. Новые факты не подставляются.")
+        for attempt in result.get("attempts", []):
+            st.caption(f"{PROVIDER_LABELS[attempt['provider']]}: {ERROR_LABELS[attempt['reason']]}")
 
 
 def _reset_builder() -> None:
@@ -144,15 +160,14 @@ def _reset_builder() -> None:
 
 def _rating_panel(card: dict[str, Any], *, compact: bool = False, preview: bool = False) -> dict[str, Any]:
     result = calculate_rating(card)
-    left, middle, right = st.columns([1, 2, 3])
-    left.metric("Предпросмотр рейтинга" if preview else "Подтверждённый рейтинг", f"{result['score']} / 100")
-    middle.metric("Уровень готовности", result["level"])
-    right.progress(result["score"] / 100)
+    st.metric("Предпросмотр рейтинга" if preview else "Подтверждённый рейтинг", f"{result['score']} / 100")
+    status_badge(result["level"], "success" if result["score"] >= 70 else "warning")
+    st.progress(result["score"] / 100)
     target = next_readiness_target(result["score"])
     if target and target["points_needed"]:
-        st.caption(f"Следующая цель: {target['label']} · ещё {target['points_needed']} баллов.")
+        st.caption(f"До уровня «{target['label']}»: {target['points_needed']} баллов.")
     if preview:
-        st.caption("Это предварительный расчёт. Баллы и место в каталоге фиксируются после вашего подтверждения.")
+        st.caption("Предварительно. Баллы появятся в каталоге после подтверждения.")
 
     with st.expander("Из чего складывается рейтинг", expanded=False):
         for row in result["breakdown"]:
@@ -161,11 +176,15 @@ def _rating_panel(card: dict[str, Any], *, compact: bool = False, preview: bool 
         st.caption("Пороги подробности: контекст 35, потребность 20, данные 15, результат и критерии 20, ограничения 14, пользователи 10, контакт 5, формат 12 символов.")
 
     if result["improvements"]:
-        st.markdown("**Что повысит рейтинг**")
-        for item in result["improvements"][:5 if compact else 9]:
+        st.markdown("**Что ещё уточнить**")
+        for item in result["improvements"][:3]:
             st.write(f"+{item['potential_points']} · **{item['label']}** — {item['hint']}")
+        if len(result["improvements"]) > 3:
+            with st.expander(f"Ещё {len(result['improvements']) - 3} подсказок"):
+                for item in result["improvements"][3:]:
+                    st.write(f"+{item['potential_points']} · **{item['label']}** — {item['hint']}")
     elif not compact:
-        st.success("Все оцениваемые поля заполнены достаточно подробно.")
+        st.caption("Все поля заполнены. Осталось проверить сведения и подтвердить карточку." if preview else "Все поля карточки заполнены.")
     return result
 
 
@@ -231,40 +250,46 @@ def _save_answers(questions: list[dict[str, Any]]) -> dict[str, str]:
 
 
 def render_new_task(owner_id: str) -> None:
-    st.header("Конструктор задачи")
-    st.write("Превратите описание проблемы в понятное предложение для студенческой команды.")
     step = st.session_state.builder_step
     steps = [("draft", "Черновик"), ("clarify", "Уточнение"), ("review", "Карточка и рейтинг"), ("published", "Публикация")]
     active = next((i for i, item in enumerate(steps) if item[0] == step), 0)
-    st.caption(" → ".join(("✓ " if index < active else "") + label for index, (_, label) in enumerate(steps)))
-    st.markdown(f"**Шаг {active + 1} из 4 · {steps[active][1]}**")
-    st.progress((active + 1) / 4)
+    titles = {
+        "draft": ("Расскажите о задаче", "Напишите своими словами, с чем нужна помощь. Мы поможем уточнить детали."),
+        "clarify": ("Добавим важные детали", "Ответьте на вопросы, которые помогут командам понять вашу задачу."),
+        "review": ("Проверьте карточку", "Поправьте сведения и подтвердите публикацию, когда будете готовы."),
+        "published": ("Задача опубликована", "Теперь студенческие команды могут предложить вам решение."),
+    }
+    page_header("Бизнес / Новая задача", *titles[step])
+    stepper([item[1] for item in steps], active)
 
     if step == "published":
         task = next((t for t in st.session_state.tasks if t["id"] == st.session_state.get("published_task_id")), None)
         if task:
             rank, total = catalog_position(st.session_state.tasks, task["id"])
-            st.success(f"«{task['title']}» опубликована от имени {task['owner_id']}.")
-            st.metric("Подтверждённый рейтинг", f"{task['rating']} / 100")
-            st.write(f"Место в общем каталоге: **{rank} из {total}**. Команды уже могут отправлять предложения.")
-            st.info("Следующий шаг: сравните отклики в «Моих задачах» и выберите подходящие команды. После их отчётов здесь же можно подтвердить этапы работы.")
+            summary_card(task["title"], f"{task['owner_id']} · {task['rating']} баллов · место {rank} из {total} в каталоге", "success")
+            st.caption("Следующий шаг — посмотреть отклики и выбрать команды в разделе «Мои задачи».")
         left, right = st.columns(2)
         left.button("К моим задачам и откликам", type="primary", on_click=_open_my_tasks, use_container_width=True)
         right.button("Создать другую задачу", on_click=_reset_builder, use_container_width=True)
         return
 
     if step == "draft":
-        sample, clear, _ = st.columns([1.4, 1, 2])
-        sample.button("Вставить пример для демо", on_click=_load_demo, use_container_width=True)
-        clear.button("Очистить", on_click=_reset_builder, use_container_width=True)
         if "draft_text" not in st.session_state:
             st.session_state.draft_text = st.session_state.saved_draft_text
-        draft = st.text_area("Черновик задачи", key="draft_text", height=180, max_chars=8000,
-                             on_change=_remember_draft,
-                             placeholder="Что происходит сейчас? Что хотите изменить? Какие сведения уже есть?")
+        with st.container(border=True):
+            draft = st.text_area("Какая помощь нужна вашему бизнесу?", key="draft_text", height=190, max_chars=8000,
+                                 on_change=_remember_draft,
+                                 placeholder="Например: покупатели часто оставляют корзины на сайте. Хотим понять причины и упростить оформление заказа.")
+            st.caption("Достаточно 2–3 предложений. Подробности уточним на следующем шаге.")
+            analyze_clicked = st.button("Получить вопросы", type="primary", key="analyze_task", use_container_width=True)
         _remember_draft()
-        st.caption("Можно начать с нескольких предложений. На следующем шаге появятся вопросы по недостающим сведениям.")
-        if st.button("Проанализировать", type="primary"):
+        sample, clear = st.columns([2, 1])
+        sample.button("Попробовать на примере", on_click=_load_demo, use_container_width=True)
+        with clear:
+            with st.popover("Начать заново", use_container_width=True):
+                st.caption("Черновик и сохранённые ответы будут очищены.")
+                st.button("Очистить", on_click=_reset_builder, use_container_width=True)
+        if analyze_clicked:
             if not draft.strip():
                 st.warning("Добавьте хотя бы краткое описание задачи.")
             elif st.session_state.get("analysis") and draft.strip() == st.session_state.get("analysis_draft"):
@@ -298,35 +323,44 @@ def render_new_task(owner_id: str) -> None:
     baseline = calculate_rating(baseline_card)
 
     if step == "clarify":
-        st.subheader("Дополните то, чего пока не хватает")
-        _show_ai_result(analysis)
-        st.metric("Рейтинг черновика", f"{baseline['score']} / 100")
-        st.caption("Предварительная полнота. В каталог попадут только подтверждённые сведения.")
-        if analysis.get("baseline_quality") != "extracted":
-            st.caption("В локальном режиме свободный текст учитывается как контекст, а строки «Данные: …» — как отдельные поля. Оценка может быть занижена.")
-        with st.expander("Исходный черновик и найденные сведения"):
+        overview, rating_col = st.columns([3, 1])
+        overview.write(f"**{len(analysis['questions'])} вопросов**, сгруппированных по смыслу. Если пока не знаете ответ, оставьте поле пустым.")
+        rating_col.metric("Рейтинг черновика", f"{baseline['score']} / 100")
+        with st.expander("Ваше описание и найденные сведения"):
             st.write(current_draft)
             _render_task_contents(baseline_card)
-        st.button("Изменить черновик", on_click=_builder_go, args=("draft",))
+            if analysis.get("baseline_quality") != "extracted":
+                st.caption("Локальная оценка свободного текста может быть занижена. Поля можно уточнить вручную.")
+            st.button("Изменить черновик", on_click=_builder_go, args=("draft",))
         if st.session_state.get("draft_card"):
             st.button("Вернуться к сохранённой карточке", on_click=_builder_go, args=("review",))
             st.caption("Повторное формирование карточки заменит её ручные правки. Можно сохранить ответы и вернуться к текущей карточке.")
         if st.session_state.get("use_demo_answers") and current_draft == DEMO_DRAFT.strip():
-            st.caption("Демо-ответы заполнены примерными данными сценария. Вы можете изменить их.")
+            st.caption("Это учебный пример: ответы уже заполнены, их можно изменить.")
         with st.form("clarification_form"):
-            st.subheader("Уточняющие вопросы")
-            for index, question in enumerate(analysis["questions"]):
-                field = question["field"]
-                key = f"answer_{index}_{field}"
-                if key not in st.session_state:
-                    st.session_state[key] = st.session_state.get("builder_answers", {}).get(key, "")
-                potential = next((row["potential_points"] for row in baseline["improvements"] if row["field"] == field), 0)
-                if potential:
-                    st.caption(f"{CARD_FIELDS[field]} · можно получить до +{potential} баллов после подтверждения")
-                st.text_area(question["question"], key=key, height=90, max_chars=2000)
-            st.caption("Если ответа пока нет, оставьте поле пустым. AI не должен придумывать данные за вас.")
-            build_submitted = st.form_submit_button("Сформировать карточку", type="primary")
-            save_answers = st.form_submit_button("Сохранить ответы")
+            question_groups = (
+                ("О задаче и людях", {"title", "context", "need", "users"}),
+                ("О результате и условиях", {"data", "constraints", "expected_result", "success_criteria"}),
+                ("О связи с вами", {"contact", "collaboration_format"}),
+            )
+            displayed_groups = 0
+            for heading, fields in question_groups:
+                questions = [(i, q) for i, q in enumerate(analysis["questions"]) if q["field"] in fields]
+                if not questions:
+                    continue
+                with st.expander(f"{heading} · вопросов: {len(questions)}", expanded=displayed_groups == 0):
+                    for index, question in questions:
+                        field = question["field"]
+                        key = f"answer_{index}_{field}"
+                        if key not in st.session_state:
+                            st.session_state[key] = st.session_state.get("builder_answers", {}).get(key, "")
+                        st.text_area(question["question"], key=key, height=90, max_chars=2000,
+                                     placeholder=FIELD_EXAMPLES[field])
+                displayed_groups += 1
+            st.caption("После ответов вы сможете отредактировать всю карточку. Публикация — отдельный шаг.")
+            primary, secondary = st.columns([2, 1])
+            build_submitted = primary.form_submit_button("Сформировать карточку", type="primary", use_container_width=True)
+            save_answers = secondary.form_submit_button("Сохранить ответы", use_container_width=True)
         if save_answers or build_submitted:
             answers = _save_answers(analysis["questions"])
             if save_answers:
@@ -340,64 +374,71 @@ def render_new_task(owner_id: str) -> None:
                     st.session_state[f"editor_{field}"] = generated["card"].get(field, "")
                 st.session_state.builder_step = "review"
                 st.rerun()
+        _show_ai_result(analysis)
         return
 
-    st.subheader("Проверьте карточку перед публикацией")
-    _show_ai_result(st.session_state.get("card_result", {"mode": "demo", "reason": "demo_requested"}))
-    st.caption("Редактируйте любые поля. Название обязательно; неполную задачу тоже можно опубликовать.")
     st.button("Вернуться к вопросам", on_click=_builder_go, args=("clarify",))
-    if "editor_topic" not in st.session_state:
-        st.session_state.editor_topic = st.session_state.get("saved_editor_topic", "Другое")
-    st.selectbox("Тема задачи", TOPICS, key="editor_topic", on_change=_remember_topic,
-                 help="Тему выбирает бизнес. Она нужна для фильтра каталога и не влияет на баллы.")
-    st.session_state.saved_editor_topic = st.session_state.editor_topic
+    form_column, score_column = st.columns([2.1, 1], gap="large")
     candidate: dict[str, str] = {}
-    groups = [
-        ("1. Суть задачи", ("title", "context", "need", "users")),
-        ("2. Результат и условия", ("data", "constraints", "expected_result", "success_criteria")),
-        ("3. Связь с бизнесом", ("contact", "collaboration_format")),
-    ]
-    for heading, fields in groups:
-        with st.container(border=True):
-            st.markdown(f"**{heading}**")
-            columns = st.columns(2)
-            for index, field in enumerate(fields):
-                key = f"editor_{field}"
-                if key not in st.session_state:
-                    st.session_state[key] = st.session_state.draft_card.get(field, "")
-                with columns[index % 2]:
+    with form_column:
+        if "editor_topic" not in st.session_state:
+            st.session_state.editor_topic = st.session_state.get("saved_editor_topic", "Другое")
+        st.selectbox("Тема задачи", TOPICS, key="editor_topic", on_change=_remember_topic,
+                     help="Помогает командам найти вашу задачу. На рейтинг не влияет.")
+        st.session_state.saved_editor_topic = st.session_state.editor_topic
+        groups = [
+            ("Описание задачи", ("title", "context", "need", "users")),
+            ("Результат и условия", ("data", "constraints", "expected_result", "success_criteria")),
+            ("Контакт и совместная работа", ("contact", "collaboration_format")),
+        ]
+        for group_index, (heading, fields) in enumerate(groups):
+            with st.expander(heading, expanded=group_index == 0):
+                for field in fields:
+                    key = f"editor_{field}"
+                    if key not in st.session_state:
+                        st.session_state[key] = st.session_state.draft_card.get(field, "")
                     if field == "title":
-                        st.text_input(CARD_FIELDS[field], key=key, max_chars=200, on_change=_remember_editor, args=(field,))
+                        st.text_input(FIELD_LABELS[field], key=key, max_chars=200,
+                                      placeholder=FIELD_EXAMPLES[field], on_change=_remember_editor, args=(field,))
                     else:
-                        st.text_area(CARD_FIELDS[field], key=key, height=110, max_chars=8000, on_change=_remember_editor, args=(field,))
-                candidate[field] = str(st.session_state.get(key, ""))
-    st.session_state.draft_card = dict(candidate)
-    evidence = st.session_state.get("card_result", {}).get("evidence", {})
-    if any(evidence.values()):
-        with st.expander("Источники AI-полей до ручного редактирования"):
-            for field, entries in evidence.items():
-                if entries:
-                    st.markdown(f"**{CARD_FIELDS[field]}**")
-                    for entry in entries:
-                        st.write(f"{'Черновик' if entry['source'] == 'draft' else 'Ответ бизнеса'}: {entry['quote']}")
-    st.markdown("### Паспорт готовности задачи")
-    current_rating = _rating_panel(candidate, preview=True)
-    st.metric("Изменение полноты карточки", f"{current_rating['score'] - baseline['score']:+d} баллов")
-    st.info(f"Публикация от имени: **{owner_id or 'укажите компанию в сайдбаре'}**. Нажимая кнопку, вы подтверждаете сведения и открываете задачу всем командам.")
-    if st.button("Подтвердить и опубликовать", type="primary", key="publish_task"):
-        if not owner_id:
-            st.error("Укажите рабочее пространство бизнеса в сайдбаре.")
-        elif not candidate.get("title", "").strip():
-            st.error("Перед публикацией укажите название задачи.")
-        else:
-            card = TaskCard.from_dict(candidate).to_dict()
-            card.update(id=make_id("task"), owner_id=owner_id, status="published", created_at=utc_now(),
-                        confirmed_at=utc_now(), rating=current_rating["score"], topic=st.session_state.editor_topic)
-            st.session_state.tasks.insert(0, card)
-            st.session_state.published_task_id = card["id"]
-            st.session_state.builder_step = "published"
-            st.session_state.draft_card = None
-            st.rerun()
+                        st.text_area(FIELD_LABELS[field], key=key, height=110, max_chars=8000,
+                                     placeholder=FIELD_EXAMPLES[field], on_change=_remember_editor, args=(field,))
+                    candidate[field] = str(st.session_state.get(key, ""))
+        st.session_state.draft_card = dict(candidate)
+        evidence = st.session_state.get("card_result", {}).get("evidence", {})
+        if any(evidence.values()):
+            with st.expander("Откуда взяты сведения"):
+                st.caption("Источники AI-полей до ручного редактирования.")
+                for field, entries in evidence.items():
+                    if entries:
+                        st.markdown(f"**{CARD_FIELDS[field]}**")
+                        for entry in entries:
+                            st.write(f"{'Черновик' if entry['source'] == 'draft' else 'Ответ бизнеса'}: {entry['quote']}")
+        _show_ai_result(st.session_state.get("card_result", {"mode": "demo", "reason": "demo_requested"}))
+    with score_column:
+        with st.container(border=True):
+            st.markdown("**Готовность к работе**")
+            current_rating = _rating_panel(candidate, preview=True)
+            st.metric("Изменение полноты карточки", f"{current_rating['score'] - baseline['score']:+d} баллов")
+            st.caption("Можно опубликовать и неполную карточку, затем дополнить её.")
+            st.divider()
+            st.write(f"Компания: {owner_id or 'не указана'}")
+            st.caption("Подтверждая публикацию, вы открываете эти сведения всем командам в каталоге.")
+            published = st.button("Подтвердить и опубликовать", type="primary", key="publish_task", use_container_width=True)
+            if published:
+                if not owner_id:
+                    st.error("Укажите название компании в меню слева.")
+                elif not candidate.get("title", "").strip():
+                    st.error("Добавьте название в разделе «Описание задачи».")
+                else:
+                    card = TaskCard.from_dict(candidate).to_dict()
+                    card.update(id=make_id("task"), owner_id=owner_id, status="published", created_at=utc_now(),
+                                confirmed_at=utc_now(), rating=current_rating["score"], topic=st.session_state.editor_topic)
+                    st.session_state.tasks.insert(0, card)
+                    st.session_state.published_task_id = card["id"]
+                    st.session_state.builder_step = "published"
+                    st.session_state.draft_card = None
+                    st.rerun()
 
 
 def render_application(task: dict[str, Any], team: dict[str, Any]) -> None:
@@ -410,21 +451,23 @@ def render_application(task: dict[str, Any], team: dict[str, Any]) -> None:
     notice = st.session_state.pop(f"apply_notice_{form_id}", None)
     if notice:
         st.success(notice)
-    with st.expander("Откликнуться на задачу", expanded=False):
+    with st.expander("Предложить решение", expanded=False):
         with st.form(f"application_form_{form_id}"):
             team_key = f"apply_team_{form_id}"
             if team_key not in st.session_state:
                 st.session_state[team_key] = team["name"]
             st.text_input("Название команды", key=team_key, disabled=True)
-            st.caption("Отклик относится к выбранному профилю команды. Сменить команду можно в сайдбаре.")
-            st.text_area("Идея решения", key=f"apply_idea_{form_id}", height=100, max_chars=3000)
-            st.text_area("План работы", key=f"apply_plan_{form_id}", height=100, max_chars=3000)
+            st.text_area("Идея решения", key=f"apply_idea_{form_id}", height=100, max_chars=3000,
+                         placeholder="Что вы предлагаете сделать и какую пользу это принесёт?")
+            st.text_area("План работы", key=f"apply_plan_{form_id}", height=100, max_chars=3000,
+                         placeholder="С чего начнёте? Какие основные шаги пройдёте?")
             st.text_input(
                 "Ссылка на прототип (необязательно)",
                 key=f"apply_url_{form_id}",
                 placeholder="https://...",
             )
-            submitted = st.form_submit_button("Отправить отклик", type="primary")
+            st.caption("Бизнес получит предложение и сам примет решение о выборе команды.")
+            submitted = st.form_submit_button("Отправить отклик", type="primary", use_container_width=True)
         if submitted:
             team_name = team["name"]
             idea = str(st.session_state.get(f"apply_idea_{form_id}", "")).strip()
@@ -445,40 +488,40 @@ def render_application(task: dict[str, Any], team: dict[str, Any]) -> None:
                 ).to_dict()
                 st.session_state.applications.append(application)
                 st.session_state[f"clear_apply_{form_id}"] = True
-                st.session_state[f"apply_notice_{form_id}"] = "Отклик отправлен. Его статус доступен в разделе «Мои отклики». XP начисляется после принятия этапов работы."
+                st.session_state[f"apply_notice_{form_id}"] = "Предложение отправлено. Следите за решением бизнеса в разделе «Мои отклики»."
                 st.rerun()
 
 
 def render_catalog(team: dict[str, Any]) -> None:
-    st.header("Открытый каталог")
-    st.write("Выберите задачу и предложите решение. Рейтинг показывает, насколько подробно бизнес подготовил условия работы.")
+    page_header("Команда / Каталог", "Найдите задачу для вашей команды", "Выберите интересную задачу, посмотрите условия и предложите своё решение.")
     all_tasks = published_catalog(st.session_state.tasks)
     if not all_tasks:
         st.info("Пока нет опубликованных задач.")
         return
-    topic_col, level_col, reset_col = st.columns([2, 2, 1])
-    topic = topic_col.selectbox("Тема", (ALL_TOPICS, *TOPICS), key="catalog_topic")
-    readiness = level_col.selectbox("Готовность", (ALL_READINESS, *READINESS_LEVELS), key="catalog_readiness")
-    reset_col.button("Сбросить фильтры", on_click=_reset_catalog_filters)
+    with st.container(border=True):
+        topic_col, level_col = st.columns(2)
+        topic = topic_col.selectbox("Тема", (ALL_TOPICS, *TOPICS), key="catalog_topic")
+        readiness = level_col.selectbox("Готовность", (ALL_READINESS, *READINESS_LEVELS), key="catalog_readiness")
+        st.button("Сбросить фильтры", on_click=_reset_catalog_filters)
     tasks = published_catalog(st.session_state.tasks, topic, readiness)
-    st.caption(f"Показано {len(tasks)} из {len(all_tasks)}. Сначала задачи с высоким рейтингом; при равенстве — опубликованные раньше. Любой команде доступен отклик при любом балле.")
+    st.caption(f"Показано {len(tasks)} из {len(all_tasks)} · сначала задачи с высоким рейтингом готовности")
+    with st.expander("Что означает готовность задачи?"):
+        st.write("Баллы от 0 до 100 показывают, насколько подробно бизнес описал условия. На любую задачу можно откликнуться, даже если её ещё нужно уточнить.")
+        st.caption("При одинаковом балле выше находится задача, опубликованная раньше.")
     if not tasks:
         st.info("По этим фильтрам задач пока нет. Сбросьте фильтры, чтобы увидеть весь каталог.")
     positions = {task["id"]: index for index, task in enumerate(all_tasks, 1)}
     for task in tasks:
         rating = calculate_rating(task)
         with st.container(border=True):
-            head, score_col = st.columns([4, 1])
-            head.subheader(task.get("title") or "Задача без названия")
-            head.caption(f"{task['topic']} · {task.get('owner_id') or 'Не указано'} · {_application_count(task['id'])} откликов")
-            head.caption(f"№{positions[task['id']]} из {len(all_tasks)} в общем каталоге")
-            score_col.metric("Рейтинг", f"{rating['score']} / 100")
-            score_col.caption(("★ " if rating['score'] >= 90 else "") + rating["level"])
-            st.progress(rating["score"] / 100)
+            st.caption(f"{task['topic']} · {task.get('owner_id') or 'Компания не указана'}")
+            st.subheader(task.get("title") or "Задача без названия")
+            status_badge(f"{rating['score']} / 100 · {rating['level']}", "success" if rating['score'] >= 70 else "warning")
             if rating["score"] < 40:
                 st.caption("Требует уточнения. Вы можете откликнуться и предложить, с чего начать.")
             st.write(task.get("expected_result") or task.get("need") or "Ожидаемый результат предстоит уточнить с бизнесом.")
-            with st.expander("Посмотреть карточку"):
+            st.caption(f"№{positions[task['id']]} из {len(all_tasks)} в общем каталоге · Предложений: {_application_count(task['id'])}")
+            with st.expander("Подробнее о задаче"):
                 _render_task_contents(task)
                 _rating_panel(task, compact=True)
             render_application(task, team)
@@ -502,9 +545,9 @@ def _render_edit_form(task: dict[str, Any]) -> None:
                 if key not in st.session_state:
                     st.session_state[key] = str(task.get(field, "") or "")
                 if field == "title":
-                    st.text_input(label, key=key)
+                    st.text_input(FIELD_LABELS[field], key=key, placeholder=FIELD_EXAMPLES[field])
                 else:
-                    st.text_area(label, key=key, height=90)
+                    st.text_area(FIELD_LABELS[field], key=key, height=90, placeholder=FIELD_EXAMPLES[field])
             submitted = st.form_submit_button("Сохранить изменения и пересчитать рейтинг")
         if submitted:
             updated = {field: str(st.session_state.get(f"edit_{task['id']}_{field}", "")) for field in CARD_FIELDS}
@@ -528,90 +571,108 @@ def _render_applications(task: dict[str, Any]) -> None:
     if not applications:
         st.caption("Пока откликов нет.")
         return
-    st.caption("Сравните идеи и планы. Можно выбрать одну, несколько или ни одной команды; выбор открывает команде этапы проекта.")
+    st.caption("Вы можете выбрать несколько команд или отклонить предложения.")
     if len(applications) > 1:
-        with st.expander("Сравнить предложения", expanded=True):
+        with st.expander("Сравнить предложения в таблице", expanded=False):
             status_labels = {"pending": "На рассмотрении", "selected": "Выбрана", "rejected": "Отклонена"}
             st.dataframe([{"Команда": app["team_name"], "Идея": app.get("idea", ""),
                            "План": app.get("plan", ""), "Статус": status_labels.get(app.get("status"), "На рассмотрении")}
                           for app in applications], hide_index=True, use_container_width=True)
     for application in applications:
         with st.container(border=True):
-            left, status_col = st.columns([4, 1])
-            left.markdown(f"**{application.get('team_name', 'Команда')}**")
+            st.markdown(f"**{application.get('team_name', 'Команда')}**")
             status_labels = {"pending": "На рассмотрении", "selected": "Выбрана", "rejected": "Отклонена"}
-            status_col.caption(status_labels.get(application.get("status", "pending"), "На рассмотрении"))
-            left.markdown(f"**Идея:** {application.get('idea', '')}")
-            left.markdown(f"**План:** {application.get('plan', '')}")
+            status_badge(status_labels.get(application.get("status", "pending"), "На рассмотрении"),
+                         "success" if application.get("status") == "selected" else "neutral")
+            st.write(application.get("idea", ""))
+            with st.expander("План команды"):
+                st.write(application.get("plan", ""))
             prototype = application.get("prototype_url", "")
             if prototype and is_valid_prototype_url(prototype):
-                left.link_button("Открыть прототип", prototype)
+                st.link_button("Открыть прототип", prototype)
             if application.get("status") == "pending":
-                choose_col, reject_col, _ = st.columns([1, 1, 4])
+                choose_col, reject_col = st.columns(2)
                 choose_col.button(
-                    "Выбрать",
+                    "Выбрать команду",
                     key=f"choose_{application['id']}",
                     type="primary",
                     on_click=_set_application_status,
                     args=(application["id"], "selected"),
+                    use_container_width=True,
                 )
                 reject_col.button(
                     "Отклонить",
                     key=f"reject_{application['id']}",
                     on_click=_set_application_status,
                     args=(application["id"], "rejected"),
+                    use_container_width=True,
                 )
 
 
 def render_my_tasks(owner_id: str) -> None:
-    st.header("Мои задачи")
-    st.caption("В этом демо имя бизнеса задаёт рабочее пространство; авторизации нет.")
+    page_header("Бизнес / Мои задачи", "Ваши задачи и предложения команд", "Здесь можно выбрать исполнителей, принять результат работы или дополнить карточку.")
     tasks = [
         task for task in st.session_state.tasks
         if task.get("owner_id") == owner_id and task.get("status") == "published"
     ]
-    tasks.sort(key=lambda task: task.get("created_at", ""), reverse=True)
+    tasks.sort(key=lambda task: (
+        any(row.get("task_id") == task["id"] and row.get("status") == "pending" for row in st.session_state.submissions),
+        task.get("created_at", ""),
+    ), reverse=True)
     if not tasks:
-        st.info("У этого бизнеса пока нет опубликованных задач. Создайте карточку в разделе «Новая задача».")
+        summary_card("Начните с первой задачи", "Опишите, с чем нужна помощь. Помощник задаст вопросы и соберёт карточку для команд.")
+        st.button("Создать первую задачу", type="primary", on_click=_open_new_task)
         return
     ids = {task["id"] for task in tasks}
     stats = st.columns(3)
-    stats[0].metric("Опубликовано задач", len(tasks))
-    stats[1].metric("Откликов на рассмотрении", sum(app.get("task_id") in ids and app.get("status") == "pending" for app in st.session_state.applications))
-    stats[2].metric("Этапов на проверке", sum(item.get("task_id") in ids and item.get("status") == "pending" for item in st.session_state.submissions))
-    for task in tasks:
+    stats[0].metric("Задачи", len(tasks))
+    stats[1].metric("Ожидают вашего выбора", sum(app.get("task_id") in ids and app.get("status") == "pending" for app in st.session_state.applications))
+    stats[2].metric("Результаты на проверке", sum(item.get("task_id") in ids and item.get("status") == "pending" for item in st.session_state.submissions))
+    st.divider()
+    for index, task in enumerate(tasks):
         rating = calculate_rating(task)
         with st.container(border=True):
-            title_col, metric_col = st.columns([4, 1])
-            title_col.subheader(task.get("title") or "Задача без названия")
-            title_col.caption(f"{rating['level']} · { _application_count(task['id']) } откликов")
+            st.subheader(task.get("title") or "Задача без названия")
             rank, total = catalog_position(st.session_state.tasks, task["id"])
-            title_col.caption(f"{task['topic']} · №{rank} из {total} в общем каталоге")
-            metric_col.metric("Рейтинг", f"{rating['score']} / 100")
-            st.progress(rating["score"] / 100)
-            _render_edit_form(task)
-            with st.expander("Как повысить готовность задачи"):
+            st.caption(f"{task['topic']} · №{rank} из {total} в общем каталоге")
+            status_badge(f"{rating['score']} / 100 · {rating['level']}", "success" if rating['score'] >= 70 else "warning")
+            pending_results = sum(row.get("task_id") == task["id"] and row.get("status") == "pending" for row in st.session_state.submissions)
+            label = f"Предложения команд: {_application_count(task['id'])}"
+            if pending_results:
+                label += f" · Результаты на проверке: {pending_results}"
+            with st.expander(label, expanded=index == 0 or bool(pending_results)):
+                if pending_results:
+                    render_business_progress(task, owner_id)
+                _render_applications(task)
+                if not pending_results:
+                    render_business_progress(task, owner_id)
+            with st.expander("Готовность и подсказки"):
                 _rating_panel(task, compact=True)
-            _render_applications(task)
-            render_business_progress(task, owner_id)
+            _render_edit_form(task)
+
+
+def _open_new_task() -> None:
+    st.session_state.business_page = "Новая задача"
+    st.session_state.saved_business_page = "Новая задача"
 
 
 def render_sidebar() -> tuple[str, str, dict[str, Any] | None]:
-    st.sidebar.title("HackAlem AI")
-    st.sidebar.caption("Практикум бизнес-задач")
-    role = st.sidebar.radio("Роль", ["Бизнес", "Студенческая команда"], key="role")
-    st.sidebar.divider()
+    st.sidebar.title("Практикум")
+    st.sidebar.caption("Бизнес-задачи и студенческие команды")
+    role = st.sidebar.radio("Я представляю", ["Бизнес", "Студенческая команда"], key="role")
     if role == "Бизнес":
         if "business_identity" not in st.session_state:
             st.session_state.business_identity = st.session_state.get("saved_business_identity", "Alem Retail")
-        owner_id = st.sidebar.text_input("Рабочее пространство бизнеса", key="business_identity")
+        with st.sidebar.expander("Моя компания", expanded=False):
+            owner_id = st.text_input("Название компании", key="business_identity", max_chars=80,
+                                     help="Это название увидят команды в вашей карточке.")
         st.session_state.saved_business_identity = owner_id
         if not owner_id.strip():
             st.sidebar.caption("Укажите имя компании, чтобы видеть её задачи.")
-        st.sidebar.caption("Имя используется для списка «Мои задачи», это не аккаунт.")
+        st.sidebar.caption(owner_id.strip() or "Компания не указана")
         if "business_page" not in st.session_state:
             st.session_state.business_page = st.session_state.get("saved_business_page", "Новая задача")
-        st.sidebar.radio("Раздел", ["Новая задача", "Мои задачи"], key="business_page")
+        st.sidebar.radio("Навигация", ["Новая задача", "Мои задачи"], key="business_page", label_visibility="collapsed")
         st.session_state.saved_business_page = st.session_state.business_page
         team = None
     else:
@@ -619,28 +680,20 @@ def render_sidebar() -> tuple[str, str, dict[str, Any] | None]:
         names = [item["name"] for item in teams]
         if "active_team" not in st.session_state:
             st.session_state.active_team = st.session_state.get("saved_active_team", names[0])
-        team_name = st.sidebar.selectbox("Выберите команду", names, key="active_team")
+        team_name = st.sidebar.selectbox("Ваша команда", names, key="active_team")
         st.session_state.saved_active_team = team_name
         team = next(item for item in teams if item["name"] == team_name)
         if "team_page" not in st.session_state:
             st.session_state.team_page = st.session_state.get("saved_team_page", "Каталог")
-        st.sidebar.radio("Раздел команды", ["Каталог", "Мои отклики", "Мои проекты"], key="team_page")
-        st.session_state.saved_team_page = st.session_state.team_page
-        st.sidebar.markdown("**Интересы**  \n" + ", ".join(team.get("interests", [])))
-        st.sidebar.markdown("**Навыки**  \n" + ", ".join(team.get("skills", [])))
-        st.sidebar.markdown("**Технологии**  \n" + ", ".join(team.get("technologies", [])))
-        owner_id = ""
-    st.sidebar.divider()
-    _show_ai_mode()
-    st.sidebar.caption("Для демо переключайте роли в одной вкладке. Данные хранятся в этой сессии браузера.")
+        st.sidebar.radio("Навигация команды", ["Каталог", "Мои отклики", "Мои проекты"], key="team_page", label_visibility="collapsed")
+        st.…649 tokens truncated…u0435ё сессии.")
+    st.sidebar.caption("HackAlem AI · Учебный прототип")
     return role, owner_id.strip(), team
 
 
 def main() -> None:
     initialize_state()
     role, owner_id, team = render_sidebar()
-    st.title("HackAlem · От задачи к результату")
-    st.caption("Бизнес готовит понятную задачу. Команда предлагает решение и получает опыт за принятые этапы.")
 
     if role == "Бизнес":
         if st.session_state.business_page == "Новая задача":
@@ -649,7 +702,6 @@ def main() -> None:
             render_my_tasks(owner_id)
     else:
         assert team is not None
-        render_team_dashboard(team)
         if st.session_state.team_page == "Каталог":
             render_catalog(team)
         elif st.session_state.team_page == "Мои отклики":

@@ -1,6 +1,7 @@
 """Offline UI regressions for the complete business/team demo workflow."""
 
 from pathlib import Path
+from html import escape
 import unittest
 from unittest.mock import patch
 
@@ -62,8 +63,8 @@ class AppTests(unittest.TestCase):
         self.assert_no_app_errors()
 
     def begin_demo_card(self):
-        self.run_button("Вставить пример для демо")
-        self.run_button("Проанализировать")
+        self.run_button("Попробовать на примере")
+        self.run_button("Получить вопросы")
         self.run_button("Сформировать карточку")
 
     def visible_application_forms(self):
@@ -74,6 +75,11 @@ class AppTests(unittest.TestCase):
         self.assertEqual(len(matches), 1, f"Expected a unique metric: {label}")
         return matches[0].value
 
+    def page_header(self):
+        headers = [item.proto.body for item in self.app.get("html") if 'class="ui-page-header"' in item.proto.body]
+        self.assertEqual(len(headers), 1, "Each page should have a single clear heading")
+        return headers[0]
+
     def application_fields(self, form_id, *, idea="Построим воронку оформления заказа", plan="Проверим события, найдём узкие места и подготовим прототип", url=""):
         self.app.text_area(key=f"apply_idea_{form_id}").set_value(idea)
         self.app.text_area(key=f"apply_plan_{form_id}").set_value(plan)
@@ -82,8 +88,8 @@ class AppTests(unittest.TestCase):
     def test_complete_demo_from_draft_to_manual_team_selection(self):
         initial_task_count = len(self.app.session_state.tasks)
         initial_application_count = len(self.app.session_state.applications)
-        self.run_button("Вставить пример для демо")
-        self.run_button("Проанализировать")
+        self.run_button("Попробовать на примере")
+        self.run_button("Получить вопросы")
         self.assertEqual(self.metric_value("Рейтинг черновика"), "10 / 100")
         self.assertGreaterEqual(len(self.app.session_state.analysis["questions"]), 3)
 
@@ -113,6 +119,69 @@ class AppTests(unittest.TestCase):
         selected = next(item for item in self.app.session_state.applications if item["id"] == application["id"])
         self.assertEqual(selected["status"], "selected")
         self.assertEqual(sum(item["status"] == "selected" for item in self.app.session_state.applications), 1)
+
+    def test_empty_draft_explains_next_action_without_creating_questions(self):
+        self.assertIn("Расскажите о задаче", self.page_header())
+        self.run_button("Получить вопросы")
+        self.assertEqual(self.app.session_state.builder_step, "draft")
+        self.assertIsNone(self.app.session_state.analysis)
+        self.assertTrue(any("описание задачи" in item.value for item in self.app.warning))
+        self.assertEqual(self.app.text_area(key="draft_text").value, "")
+
+    def test_empty_business_workspace_has_a_direct_path_to_creation(self):
+        draft = "Нужно сократить время ожидания покупателей у стойки выдачи заказов."
+        self.app.text_area(key="draft_text").set_value(draft).run()
+        self.app.sidebar.text_input(key="business_identity").set_value("Новая компания").run()
+        self.select_business_page("Мои задачи")
+        self.assertIn("Ваши задачи", self.page_header())
+        self.run_button("Создать первую задачу")
+        self.assertEqual(self.app.sidebar.radio(key="business_page").value, "Новая задача")
+        self.assertIn("Расскажите о задаче", self.page_header())
+        self.assertEqual(self.app.text_area(key="draft_text").value, draft)
+
+    def test_each_page_has_one_heading_and_catalog_keeps_experience_secondary(self):
+        self.assertIn("Расскажите о задаче", self.page_header())
+        self.assertEqual(len(self.app.main.title), 0)
+        self.select_business_page("Мои задачи")
+        self.assertIn("Ваши задачи", self.page_header())
+        self.select_role("Студенческая команда")
+        self.assertIn("Найдите задачу", self.page_header())
+        self.assertFalse(any(item.label == "Подтверждённые XP" for item in self.app.metric))
+        sidebar_html = "\n".join(item.proto.body for item in self.app.sidebar.get("html"))
+        self.assertIn("0 баллов опыта", sidebar_html)
+        for page in ("Мои отклики", "Мои проекты"):
+            self.app.sidebar.radio(key="team_page").set_value(page).run()
+            self.assert_no_app_errors()
+            self.assertIn(page, self.page_header())
+        dashboard = [item for item in self.app.expander if item.label == "Опыт и достижения команды"]
+        self.assertEqual(len(dashboard), 1)
+        self.assertFalse(dashboard[0].proto.expanded)
+        self.assertEqual(self.metric_value("Подтверждённые XP"), "0")
+
+    def test_all_review_fields_stay_editable_before_human_confirmation(self):
+        initial_count = len(self.app.session_state.tasks)
+        self.begin_demo_card()
+        self.assertIn("Проверьте карточку", self.page_header())
+        for field in CARD_FIELDS:
+            widget = self.app.text_input(key=f"editor_{field}") if field == "title" else self.app.text_area(key=f"editor_{field}")
+            self.assertFalse(widget.disabled, f"The business must be able to edit {field}")
+            self.assertEqual(widget.value, DEMO_ANSWERS[field])
+        self.assertFalse(self.app.button(key="publish_task").disabled)
+        self.assertEqual(len(self.app.session_state.tasks), initial_count)
+
+    def test_publication_receipt_escapes_business_and_task_names(self):
+        company = '<b>Компания & партнёры</b>'
+        title = '<img src=x onerror="alert(1)"> Задача'
+        self.app.sidebar.text_input(key="business_identity").set_value(company).run()
+        self.begin_demo_card()
+        self.app.text_input(key="editor_title").set_value(title).run()
+        self.run_button("Подтвердить и опубликовать")
+        receipts = [item.proto.body for item in self.app.get("html") if '<section class="ui-summary ' in item.proto.body]
+        self.assertEqual(len(receipts), 1)
+        self.assertIn(escape(title, quote=True), receipts[0])
+        self.assertIn(escape(company, quote=True), receipts[0])
+        self.assertNotIn(title, receipts[0])
+        self.assertEqual(self.app.session_state.tasks[0]["title"], title)
 
     def test_switching_teams_uses_clean_form_and_correct_identity(self):
         self.select_role("Студенческая команда")
@@ -173,7 +242,7 @@ class AppTests(unittest.TestCase):
     def test_labelled_draft_is_scored_from_all_locally_extracted_fields(self):
         draft = "\n".join(f"{label}: {DEMO_ANSWERS[field]}" for field, label in CARD_FIELDS.items())
         self.app.text_area(key="draft_text").set_value(draft)
-        self.run_button("Проанализировать")
+        self.run_button("Получить вопросы")
         self.assertEqual(self.app.session_state.analysis["mode"], "demo")
         self.assertEqual(self.metric_value("Рейтинг черновика"), "100 / 100")
         for field, value in DEMO_ANSWERS.items():
@@ -189,7 +258,7 @@ class AppTests(unittest.TestCase):
         self.assertEqual(self.app.text_area(key="draft_text").value, draft)
         self.assertEqual(self.app.session_state.saved_draft_text, draft)
 
-        self.run_button("Проанализировать")
+        self.run_button("Получить вопросы")
         question = self.app.session_state.analysis["questions"][0]
         answer_key = f"answer_0_{question['field']}"
         answer = "Подтверждённый ответ бизнеса для продолжения работы после переключения роли."
@@ -240,7 +309,7 @@ class AppTests(unittest.TestCase):
         self.select_role("Студенческая команда")
         self.assertEqual(self.app.sidebar.radio(key="team_page").value, "Мои проекты")
         self.assertEqual(self.app.session_state.saved_team_page, "Мои проекты")
-        self.assertTrue(any(header.value == "Мои проекты" for header in self.app.header))
+        self.assertIn("Мои проекты", self.page_header())
 
     def test_published_receipt_prevents_duplicate_publication_on_reruns(self):
         initial_count = len(self.app.session_state.tasks)
@@ -269,8 +338,8 @@ class AppTests(unittest.TestCase):
 
     def test_reanalyzing_unchanged_draft_preserves_answers_and_manual_card(self):
         with patch("src.ai.analyze_draft", wraps=analyze_draft) as analyzer:
-            self.run_button("Вставить пример для демо")
-            self.run_button("Проанализировать")
+            self.run_button("Попробовать на примере")
+            self.run_button("Получить вопросы")
             question = self.app.session_state.analysis["questions"][0]
             answer_key = f"answer_0_{question['field']}"
             saved_answer = "Уточнение бизнеса, которое необходимо сохранить при повторном анализе."
@@ -282,7 +351,7 @@ class AppTests(unittest.TestCase):
             self.run_button("Вернуться к вопросам")
             self.assertEqual(self.app.text_area(key=answer_key).value, saved_answer)
             self.run_button("Изменить черновик")
-            self.run_button("Проанализировать")
+            self.run_button("Получить вопросы")
             self.assertEqual(analyzer.call_count, 1)
         self.assertEqual(self.app.session_state.builder_step, "review")
         self.assertEqual(self.app.text_area(key="editor_expected_result").value, manual_value)

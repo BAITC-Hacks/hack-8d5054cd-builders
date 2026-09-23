@@ -27,7 +27,7 @@ role = st.sidebar.radio("Тестовая роль", ["Команда", "Биз�
 if role == "Команда":
     team_id = st.sidebar.selectbox("Тестовая команда", ["team_a", "team_b"], key="test_team")
     team = next(team for team in st.session_state.teams if team["id"] == team_id)
-    render_team_dashboard(team)
+    render_team_dashboard(team, compact=True)
     render_team_projects(team)
     render_team_applications(team)
 else:
