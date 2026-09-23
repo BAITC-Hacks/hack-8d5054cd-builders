@@ -686,7 +686,22 @@ def render_sidebar() -> tuple[str, str, dict[str, Any] | None]:
         if "team_page" not in st.session_state:
             st.session_state.team_page = st.session_state.get("saved_team_page", "Каталог")
         st.sidebar.radio("Навигация команды", ["Каталог", "Мои отклики", "Мои проекты"], key="team_page", label_visibility="collapsed")
-        st.…649 tokens truncated…u0435ё сессии.")
+        st.session_state.saved_team_page = st.session_state.team_page
+        with st.sidebar:
+            render_team_dashboard(team, compact=True)
+            with st.expander("О команде"):
+                st.write("Интересы: " + ", ".join(team.get("interests", [])))
+                st.write("Навыки: " + ", ".join(team.get("skills", [])))
+                st.write("Технологии: " + ", ".join(team.get("technologies", [])))
+        owner_id = ""
+    st.sidebar.divider()
+    _show_ai_mode()
+    with st.sidebar.expander("Как пользоваться"):
+        if role == "Бизнес":
+            st.write("1. Создайте и подтвердите задачу.\n2. В «Моих задачах» выберите команды.\n3. Принимайте результаты их работы.")
+        else:
+            st.write("1. Найдите задачу в каталоге.\n2. Отправьте идею и план.\n3. После выбора бизнесом сдавайте этапы в «Моих проектах».")
+        st.caption("Это демоверсия без входа в аккаунт. Для показа переключайте роли в одной вкладке: сведения хранятся только в её сессии.")
     st.sidebar.caption("HackAlem AI · Учебный прототип")
     return role, owner_id.strip(), team
 
