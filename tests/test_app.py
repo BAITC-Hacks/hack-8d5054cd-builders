@@ -6,7 +6,8 @@ from unittest.mock import patch
 
 from streamlit.testing.v1 import AppTest
 
-from src.ai import DEMO_ANSWERS
+from src.ai import DEMO_ANSWERS, analyze_draft
+from src.catalog import ALL_READINESS, ALL_TOPICS
 from src.models import CARD_FIELDS
 
 
@@ -56,6 +57,18 @@ class AppTests(unittest.TestCase):
         self.app.sidebar.radio(key="role").set_value(role).run()
         self.assert_no_app_errors()
 
+    def select_business_page(self, page):
+        self.app.sidebar.radio(key="business_page").set_value(page).run()
+        self.assert_no_app_errors()
+
+    def begin_demo_card(self):
+        self.run_button("Вставить пример для демо")
+        self.run_button("Проанализировать")
+        self.run_button("Сформировать карточку")
+
+    def visible_application_forms(self):
+        return [button.key for button in self.app.button if str(button.key).startswith("FormSubmitter:application_form_")]
+
     def metric_value(self, label):
         matches = [metric for metric in self.app.metric if metric.label == label]
         self.assertEqual(len(matches), 1, f"Expected a unique metric: {label}")
@@ -94,6 +107,7 @@ class AppTests(unittest.TestCase):
         self.assertEqual(application["team_name"], "DataCraft")
 
         self.select_role("Бизнес")
+        self.select_business_page("Мои задачи")
         self.app.button(key=f"choose_{application['id']}").click().run()
         self.assert_no_app_errors()
         selected = next(item for item in self.app.session_state.applications if item["id"] == application["id"])
@@ -133,6 +147,7 @@ class AppTests(unittest.TestCase):
         self.assertEqual(self.app.session_state.saved_business_identity, "Тестовая компания")
 
     def test_confirmed_edit_updates_stored_rating(self):
+        self.select_business_page("Мои задачи")
         task = next(item for item in self.app.session_state.tasks if item["id"] == "seed_task_2")
         self.assertEqual(task["rating"], 80)
         self.app.text_area(key="edit_seed_task_2_data").set_value("История продаж и остатков товаров в CSV за два года.")
@@ -164,6 +179,143 @@ class AppTests(unittest.TestCase):
         for field, value in DEMO_ANSWERS.items():
             self.assertEqual(self.app.session_state.analysis["card"][field], value)
         self.assertGreaterEqual(len(self.app.session_state.analysis["questions"]), 3)
+
+    def test_draft_and_saved_answers_survive_role_and_page_switches(self):
+        draft = "Нужно сократить время обработки обращений покупателей в нашем магазине."
+        self.app.text_area(key="draft_text").set_value(draft).run()
+        self.assert_no_app_errors()
+        self.select_role("Студенческая команда")
+        self.select_role("Бизнес")
+        self.assertEqual(self.app.text_area(key="draft_text").value, draft)
+        self.assertEqual(self.app.session_state.saved_draft_text, draft)
+
+        self.run_button("Проанализировать")
+        question = self.app.session_state.analysis["questions"][0]
+        answer_key = f"answer_0_{question['field']}"
+        answer = "Подтверждённый ответ бизнеса для продолжения работы после переключения роли."
+        self.app.text_area(key=answer_key).set_value(answer)
+        self.run_button("Сохранить ответы")
+        self.select_role("Студенческая команда")
+        self.select_role("Бизнес")
+        self.assertEqual(self.app.session_state.builder_step, "clarify")
+        self.assertEqual(self.app.text_area(key=answer_key).value, answer)
+        self.select_business_page("Мои задачи")
+        self.select_business_page("Новая задача")
+        self.assertEqual(self.app.text_area(key=answer_key).value, answer)
+
+    def test_manual_card_edits_and_topic_survive_role_switch(self):
+        self.begin_demo_card()
+        context = "Ручная правка: покупатели магазина не могут найти нужный способ оплаты."
+        title = "Удобная оплата заказа"
+        self.app.text_area(key="editor_context").set_value(context).run()
+        self.app.text_input(key="editor_title").set_value(title).run()
+        self.app.selectbox(key="editor_topic").set_value("Продукты и сервисы").run()
+        self.assert_no_app_errors()
+        self.select_role("Студенческая команда")
+        self.select_role("Бизнес")
+        self.assertEqual(self.app.session_state.builder_step, "review")
+        self.assertEqual(self.app.text_area(key="editor_context").value, context)
+        self.assertEqual(self.app.text_input(key="editor_title").value, title)
+        self.assertEqual(self.app.selectbox(key="editor_topic").value, "Продукты и сервисы")
+        self.assertEqual(self.app.session_state.draft_card["context"], context)
+
+    def test_latest_editor_values_are_saved_during_simultaneous_role_switch(self):
+        self.begin_demo_card()
+        latest_need = "Нужно упростить выбор доставки, чтобы покупатели завершали оформление заказа."
+        self.app.text_area(key="editor_need").set_value(latest_need)
+        self.app.selectbox(key="editor_topic").set_value("Продукты и сервисы")
+        self.select_role("Студенческая команда")
+        self.select_role("Бизнес")
+        self.assertEqual(self.app.session_state.builder_step, "review")
+        self.assertEqual(self.app.text_area(key="editor_need").value, latest_need)
+        self.assertEqual(self.app.session_state.draft_card["need"], latest_need)
+        self.assertEqual(self.app.selectbox(key="editor_topic").value, "Продукты и сервисы")
+        self.assertEqual(self.app.session_state.saved_editor_topic, "Продукты и сервисы")
+
+    def test_team_project_page_survives_role_switch(self):
+        self.select_role("Студенческая команда")
+        self.app.sidebar.radio(key="team_page").set_value("Мои проекты").run()
+        self.assert_no_app_errors()
+        self.select_role("Бизнес")
+        self.select_role("Студенческая команда")
+        self.assertEqual(self.app.sidebar.radio(key="team_page").value, "Мои проекты")
+        self.assertEqual(self.app.session_state.saved_team_page, "Мои проекты")
+        self.assertTrue(any(header.value == "Мои проекты" for header in self.app.header))
+
+    def test_published_receipt_prevents_duplicate_publication_on_reruns(self):
+        initial_count = len(self.app.session_state.tasks)
+        self.begin_demo_card()
+        self.run_button("Подтвердить и опубликовать")
+        published_id = self.app.session_state.published_task_id
+        self.assertEqual(self.app.session_state.builder_step, "published")
+        self.assertFalse(any(button.label == "Подтвердить и опубликовать" for button in self.app.button))
+        for _ in range(2):
+            self.app.run()
+            self.assert_no_app_errors()
+        self.select_role("Студенческая команда")
+        self.select_role("Бизнес")
+        self.assertEqual(self.app.session_state.builder_step, "published")
+        self.assertEqual(self.app.session_state.published_task_id, published_id)
+        self.run_button("К моим задачам и откликам")
+        self.assertEqual(self.app.sidebar.radio(key="business_page").value, "Мои задачи")
+        self.select_business_page("Новая задача")
+        self.assertFalse(any(button.label == "Подтвердить и опубликовать" for button in self.app.button))
+        self.assertEqual(len(self.app.session_state.tasks), initial_count + 1)
+        self.assertEqual(sum(item["id"] == published_id for item in self.app.session_state.tasks), 1)
+        self.run_button("Создать другую задачу")
+        self.assertEqual(self.app.session_state.builder_step, "draft")
+        self.assertEqual(self.app.text_area(key="draft_text").value, "")
+        self.assertEqual(len(self.app.session_state.tasks), initial_count + 1)
+
+    def test_reanalyzing_unchanged_draft_preserves_answers_and_manual_card(self):
+        with patch("src.ai.analyze_draft", wraps=analyze_draft) as analyzer:
+            self.run_button("Вставить пример для демо")
+            self.run_button("Проанализировать")
+            question = self.app.session_state.analysis["questions"][0]
+            answer_key = f"answer_0_{question['field']}"
+            saved_answer = "Уточнение бизнеса, которое необходимо сохранить при повторном анализе."
+            self.app.text_area(key=answer_key).set_value(saved_answer)
+            self.run_button("Сформировать карточку")
+            manual_value = "Результат вручную уточнён: интерактивный прототип нового оформления заказа."
+            self.app.text_area(key="editor_expected_result").set_value(manual_value).run()
+            self.assert_no_app_errors()
+            self.run_button("Вернуться к вопросам")
+            self.assertEqual(self.app.text_area(key=answer_key).value, saved_answer)
+            self.run_button("Изменить черновик")
+            self.run_button("Проанализировать")
+            self.assertEqual(analyzer.call_count, 1)
+        self.assertEqual(self.app.session_state.builder_step, "review")
+        self.assertEqual(self.app.text_area(key="editor_expected_result").value, manual_value)
+        self.assertEqual(self.app.session_state.builder_answers[answer_key], saved_answer)
+
+    def test_catalog_filters_reset_and_zero_rating_does_not_block_application(self):
+        self.app.session_state.tasks.append({
+            "id": "low_score_task", "title": "Тестовая образовательная задача",
+            "status": "published", "owner_id": "Другая компания", "topic": "Образование",
+            "created_at": "2026-09-23T10:00:00+00:00", "rating": 0,
+        })
+        self.select_role("Студенческая команда")
+        all_forms = self.visible_application_forms()
+        low_form_id = "low_score_task_seed_team_1"
+        low_button_key = f"FormSubmitter:application_form_{low_form_id}-Отправить отклик"
+        self.assertEqual(len(all_forms), len(self.app.session_state.tasks))
+        self.assertIn(low_button_key, all_forms)
+        self.app.selectbox(key="catalog_topic").set_value("Образование").run()
+        self.app.selectbox(key="catalog_readiness").set_value("Черновик").run()
+        self.assert_no_app_errors()
+        self.assertEqual(self.visible_application_forms(), [low_button_key])
+        self.assertFalse(self.app.button(key=low_button_key).disabled)
+        self.assertTrue(any("Требует уточнения" in caption.value for caption in self.app.caption))
+        self.assertTrue(any(f"№{len(all_forms)} из {len(all_forms)}" in caption.value for caption in self.app.caption))
+        initial_application_count = len(self.app.session_state.applications)
+        self.application_fields(low_form_id, idea="Сначала уточним проблему с бизнесом", plan="Проведём интервью и согласуем ожидаемый результат")
+        self.submit_form(f"application_form_{low_form_id}", "Отправить отклик")
+        self.assertEqual(len(self.app.session_state.applications), initial_application_count + 1)
+        self.assertEqual(self.app.session_state.applications[-1]["task_id"], "low_score_task")
+        self.run_button("Сбросить фильтры")
+        self.assertEqual(self.app.selectbox(key="catalog_topic").value, ALL_TOPICS)
+        self.assertEqual(self.app.selectbox(key="catalog_readiness").value, ALL_READINESS)
+        self.assertEqual(self.visible_application_forms(), all_forms)
 
 
 if __name__ == "__main__":

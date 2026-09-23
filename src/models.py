@@ -66,6 +66,8 @@ class TaskCard:
     status: str = "draft"
     created_at: str = field(default_factory=utc_now)
     rating: int = 0
+    topic: str = "Другое"
+    confirmed_at: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -79,6 +81,8 @@ class TaskCard:
             status=raw.get("status", "draft"),
             created_at=raw.get("created_at") or utc_now(),
             rating=int(raw.get("rating", 0) or 0),
+            topic=raw.get("topic") or "Другое",
+            confirmed_at=raw.get("confirmed_at", ""),
         )
         return cls(**known)
 
