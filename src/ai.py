@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from typing import Any
 
 from .config import get_settings
@@ -77,6 +78,9 @@ EXTRACTION_PROMPT = """Ты — внимательный бизнес-анали
 Для каждого из десяти полей верни массив от 0 до 4 доказательств вида source + quote.
 source — существующий ключ sources; quote — точная непрерывная цитата из этого источника.
 Выбирай краткую содержательную цитату; сохраняй числа, сроки, отрицания и оговорки.
+Возвращай предложение целиком: нельзя вырезать положительный фрагмент из отрицания
+или отбрасывать условие в начале или конце предложения. Проверка расширяет короткую
+цитату до границ предложения; неоднозначные вхождения в разных предложениях отклоняются.
 Не перефразируй, не дописывай контакты, бюджет, метрики, технологии или обещания результата.
 Если факта нет, верни []. «Не знаю», «уточним позже» и общие пожелания не закрывают пробел.
 Нельзя разнести одно общее описание по всем полям ради полноты. Цитата должна отвечать
@@ -156,6 +160,48 @@ def _normalise(text: str) -> str:
     return " ".join(text.split())
 
 
+def _supported_quote(quote: str, source: str) -> str:
+    """Keep the containing sentence, not just an arbitrary matching substring.
+
+    This is a conservative punctuation guard, not a semantic entailment check.
+    It retains local conditions and negation, but cannot resolve contradictions
+    between sentences, indirect speech, or every abbreviation. Newlines alone
+    are not boundaries: a wrapped line must not detach a preceding negation.
+    """
+    quote, source = _normalise(quote), _normalise(source)
+    if not quote or len(quote) > 4000:
+        raise ValueError("Unsupported fact")
+    boundaries = [0]
+    for match in re.finditer(r'[.!?][\"»”’\)\]]*\s+(?=\S)', source):
+        if source[match.start()] == ".":
+            # Keep initials, short abbreviations, and a lowercase continuation
+            # together. Over-expanding is safer than dropping their context.
+            previous = re.search(r"\w+$", source[:match.start()])
+            if (previous and len(previous.group()) <= 3) or source[match.end()].islower():
+                continue
+        boundaries.append(match.end())
+    boundaries.append(len(source))
+    contexts = set()
+    offset = source.find(quote)
+    while offset >= 0:
+        end = offset + len(quote)
+        cuts_left = offset > 0 and (source[offset - 1].isalnum() or source[offset - 1] == "_") and (quote[0].isalnum() or quote[0] == "_")
+        cuts_right = end < len(source) and (source[end].isalnum() or source[end] == "_") and (quote[-1].isalnum() or quote[-1] == "_")
+        if not cuts_left and not cuts_right:
+            left = max(boundary for boundary in boundaries if boundary <= offset)
+            right = min(boundary for boundary in boundaries if boundary >= end)
+            contexts.add(source[left:right].strip())
+        offset = source.find(quote, offset + 1)
+    # Without offsets in the contract, different contexts cannot be selected
+    # reliably. Ask the provider to quote enough text to disambiguate instead.
+    if len(contexts) != 1:
+        raise ValueError("Unsupported or ambiguous quote")
+    context = contexts.pop()
+    if len(context) > 4000:
+        raise ValueError("Quote context too long")
+    return context
+
+
 def _sources(draft: str, answers: dict[str, str] | None = None) -> dict[str, str]:
     sources = {"draft": draft.strip()}
     for field, text in (answers or {}).items():
@@ -216,9 +262,7 @@ def _validate_payload(raw: dict[str, Any], sources: dict[str, str], *, analysis:
             source, quote = item["source"], item["quote"]
             if not isinstance(source, str) or not isinstance(quote, str) or source not in sources:
                 raise ValueError("Invalid source")
-            quote = _normalise(quote)
-            if not quote or len(quote) > 4000 or quote not in _normalise(sources[source]):
-                raise ValueError("Unsupported fact")
+            quote = _supported_quote(quote, sources[source])
             if quote not in quotes:
                 quotes.append(quote)
                 verified.append({"source": source, "quote": quote})
@@ -344,8 +388,19 @@ def _local_card(draft: str, answers: dict[str, str] | None = None, known_card: d
     for key, value in (known_card or {}).items():
         if key in card and isinstance(value, str):
             fragments = [_normalise(line) for line in value.splitlines() if line.strip()]
-            if fragments and all(any(line in _normalise(text) for text in sources.values()) for line in fragments):
-                card[key] = value.strip()
+            preserved = []
+            for fragment in fragments:
+                contexts = set()
+                for text in sources.values():
+                    try:
+                        contexts.add(_supported_quote(fragment, text))
+                    except ValueError:
+                        continue
+                if len(contexts) != 1:
+                    break
+                preserved.append(contexts.pop())
+            if preserved and len(preserved) == len(fragments):
+                card[key] = "\n".join(dict.fromkeys(preserved))
     labels = {label.casefold(): key for key, label in CARD_FIELDS.items()}
     labels.update({key: key for key in CARD_FIELDS})
     labels.update({"данные": "data", "результат": "expected_result", "формат": "collaboration_format"})

@@ -92,6 +92,71 @@ class RatingTests(unittest.TestCase):
             with self.subTest(field=field, value=value):
                 self.assertEqual(calculate_rating({field: value})["score"], points)
 
+    def test_explicit_data_absence_does_not_earn_points(self):
+        for value in (
+            "Доступных данных пока нет.",
+            "Данных пока нет.",
+            "Нет доступных материалов.",
+            "Данные пока отсутствуют.",
+            "Материалы не предоставлены.",
+            "Мы не готовы передать данные.",
+            "Мы не можем предоставить материалы.",
+            "Нет доступа к данным.",
+            "Данных нет, соберём позже после встречи.",
+            "Данных нет. Источники уточним позже.",
+            "Данных нет, сбор планируется через месяц.",
+            "Данных нет, пока не планируем собирать.",
+            "Данных нет, документов тоже нет.",
+        ):
+            with self.subTest(value=value):
+                result = calculate_rating({"data": value})
+                self.assertEqual(result["score"], 0)
+                hint = next(item for item in result["improvements"] if item["field"] == "data")
+                self.assertEqual(hint["potential_points"], 20)
+                self.assertIn("что и как соберёте", hint["hint"])
+
+    def test_absence_with_named_materials_or_collection_plan_is_preserved(self):
+        for value in (
+            "Данных нет, соберём ответы покупателей через опрос.",
+            "Нет данных о продажах, но есть выгрузка остатков за месяц.",
+            "Данных пока нет; есть журнал смен на бумаге.",
+            "Данных нет, соберём фото витрин.",
+            "Материалы отсутствуют, проведём интервью с управляющими.",
+            "Не все данные доступны, есть обезличенная выгрузка событий сайта.",
+            "Мы не готовы передать данные, но есть обезличенная выгрузка событий сайта.",
+        ):
+            with self.subTest(value=value):
+                self.assertEqual(calculate_rating({"data": value})["score"], 20)
+
+    def test_vague_acceptance_wishes_do_not_earn_full_weight(self):
+        for value in (
+            "Нужно, чтобы всё работало хорошо и было удобно.",
+            "Всё должно работать быстро, качественно и без проблем.",
+            "Нужно, чтобы всё работало хорошо на 100% и было удобно.",
+            "Хочется, чтобы было удобно пользоваться сервисом.",
+        ):
+            with self.subTest(value=value):
+                self.assertEqual(calculate_rating({"success_criteria": value})["score"], 0)
+        result = calculate_rating({"success_criteria": "Нужно повысить конверсию заказов."})
+        self.assertEqual(result["score"], 7)
+        hint = next(item for item in result["improvements"] if item["field"] == "success_criteria")
+        self.assertEqual(hint["potential_points"], 8)
+        self.assertIn("порог метрики", hint["hint"])
+        self.assertIn("способ проверки", hint["hint"])
+
+    def test_observable_criteria_and_negation_in_other_fields_are_preserved(self):
+        for value in (
+            "Ни одного потерянного заказа при повторной отправке формы.",
+            "Пользователь оформляет заказ без помощи сотрудника на проверке прототипа.",
+            "Нужно повысить конверсию заказов на 5% в эксперименте.",
+            "Отчёт собирается менее чем за пять минут.",
+            "Работает удобно: покупатель проходит пять сценариев оформления.",
+        ):
+            with self.subTest(value=value):
+                self.assertEqual(calculate_rating({"success_criteria": value})["score"], 15)
+        self.assertEqual(calculate_rating({"constraints": "Доступных данных пока нет."})["score"], 10)
+        self.assertEqual(calculate_rating({"constraints": "Персональные данные не предоставлены; используем обезличенные события."})["score"], 10)
+
     def test_non_string_values_are_not_filled_fields(self):
         for value in (None, False, 12345, ["данные"], {"value": "данные"}):
             with self.subTest(value=value):

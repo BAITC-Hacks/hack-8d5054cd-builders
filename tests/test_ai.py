@@ -158,6 +158,25 @@ class ProviderRoutingTests(unittest.TestCase):
         self.assertEqual(result["card"]["constraints"], "")
         self.request.assert_not_called()
 
+    def test_fallback_restores_negative_context_of_old_partial_quote(self):
+        self.settings["demo"] = True
+        result = ai.build_card(
+            "Мы не готовы передать данные", {},
+            known_card={"data": "готовы передать данные"},
+        )
+        self.assertEqual(result["card"]["data"], "Мы не готовы передать данные")
+        self.request.assert_not_called()
+
+    def test_ambiguous_quote_uses_existing_provider_fallback(self):
+        draft = "Мы не готовы передать данные. Мы готовы передать данные."
+        raw = {"field_sources": {field: [] for field in CARD_FIELDS}}
+        raw["field_sources"]["data"] = [{"source": "draft", "quote": "готовы передать данные"}]
+        self.request.return_value = raw
+        result = ai.build_card(draft, {}, provider="openai")
+        self.assertEqual(result["mode"], "demo")
+        self.assertEqual(result["reason"], "invalid_response")
+        self.assertEqual(result["card"]["context"], draft)
+
 
 class PayloadValidationTests(unittest.TestCase):
     def validate(self, raw, *, analysis=True):
@@ -168,6 +187,61 @@ class PayloadValidationTests(unittest.TestCase):
         self.assertEqual(result["card"]["context"], CONTEXT)
         self.assertEqual(result["card"]["need"], NEED)
         self.assertEqual(result["evidence"]["need"], [{"source": "draft", "quote": NEED}])
+
+    def validate_quote(self, source, quote):
+        raw = {"field_sources": {field: [] for field in CARD_FIELDS}}
+        raw["field_sources"]["data"] = [{"source": "draft", "quote": quote}]
+        return ai._validate_payload(raw, {"draft": source}, analysis=False)
+
+    def test_partial_quotes_keep_negation_conditions_and_trailing_context(self):
+        cases = (
+            ("Мы не готовы передать данные", "готовы передать данные"),
+            ("Мы не\nготовы передать данные", "готовы передать данные"),
+            ("Неверно, что мы готовы передать данные.", "готовы передать данные"),
+            ("Если получим согласие, мы готовы передать данные.", "готовы передать данные"),
+            ("Мы готовы передать данные, только после согласования.", "Мы готовы передать данные"),
+            ("Мы не готовы передать данные: согласование займёт 3 недели.", "согласование займёт 3 недели"),
+            ("Мы не передадим данные т. е. выгрузку за 2026 г. до согласования.", "выгрузку за 2026 г."),
+        )
+        for source, quote in cases:
+            with self.subTest(source=source, quote=quote):
+                result = self.validate_quote(source, quote)
+                expected = ai._normalise(source)
+                self.assertEqual(result["card"]["data"], expected)
+                self.assertEqual(result["evidence"]["data"], [{"source": "draft", "quote": expected}])
+
+    def test_absent_quotes_and_quotes_cut_inside_words_are_rejected(self):
+        for source, quote in (
+            ("Мы не готовы передать данные", "получить данные"),
+            ("Мы неготовы передать данные", "готовы передать данные"),
+            ("Мы готовы передать данные", "Мы готовы передать дан"),
+        ):
+            with self.subTest(source=source, quote=quote), self.assertRaises(ValueError):
+                self.validate_quote(source, quote)
+
+    def test_complete_negative_and_positive_quotes_stay_unchanged(self):
+        for quote in ("Мы не готовы передать данные.", "Мы готовы передать данные."):
+            with self.subTest(quote=quote):
+                self.assertEqual(self.validate_quote(quote, quote)["card"]["data"], quote)
+
+    def test_negation_in_another_sentence_does_not_reject_positive_quote(self):
+        quote = "Мы готовы передать данные."
+        source = "Мы не готовы обсуждать бюджет. " + quote
+        self.assertEqual(self.validate_quote(source, quote)["card"]["data"], quote)
+
+    def test_repeated_quote_with_different_contexts_is_rejected_in_both_orders(self):
+        negative = "Мы не готовы передать данные."
+        positive = "Мы готовы передать данные."
+        for source in (negative + " " + positive, positive + " " + negative):
+            with self.subTest(source=source):
+                with self.assertRaises(ValueError):
+                    self.validate_quote(source, "готовы передать данные")
+                self.assertEqual(self.validate_quote(source, positive)["card"]["data"], positive)
+
+    def test_identical_repeated_sentences_are_unambiguous(self):
+        sentence = "Мы не готовы передать данные."
+        result = self.validate_quote(sentence + " " + sentence, "готовы передать данные")
+        self.assertEqual(result["card"]["data"], sentence)
 
     def test_json_top_level_and_content_types_are_strict(self):
         for text in ("[]", "null", "true", "1", '"object"', "not JSON", None, {}):
@@ -296,6 +370,7 @@ class PromptAndLocalQualityTests(unittest.TestCase):
             "от 3 до 10", "один вопрос на поле", "Не повторяй вопрос",
             "Не перефразируй", "не выбираешь исполнителей", "не начисляешь баллы",
             "success_criteria", "сохраняй", "пустым для уточнения человеком",
+            "предложение целиком", "неоднозначные вхождения",
         ):
             self.assertIn(rule.casefold(), prompt.casefold())
         weights = json.loads(messages[1]["content"])["field_weights"]
