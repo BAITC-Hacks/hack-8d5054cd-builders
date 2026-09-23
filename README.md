@@ -151,10 +151,10 @@ requirements.txt        Зависимости
 
 ### 7.1. Получить исходники
 
-Нужны Python 3.11+ и `pip`; для клонирования — Git. Финальная версия подготовлена в [PR №1](https://github.com/BAITC-Hacks/hack-8d5054cd-builders/pull/1), ветка `codex/ai-providers-v0.2`.
+Нужны Python 3.11+ и `pip`; для клонирования — Git. Актуальная версия находится в основной ветке **`main`**. Изменения из [PR №1](https://github.com/BAITC-Hacks/hack-8d5054cd-builders/pull/1) объединены в неё.
 
 ```bash
-git clone --branch codex/ai-providers-v0.2 https://github.com/BAITC-Hacks/hack-8d5054cd-builders.git
+git clone https://github.com/BAITC-Hacks/hack-8d5054cd-builders.git
 cd hack-8d5054cd-builders
 ```
 
@@ -315,7 +315,7 @@ NVIDIA_MODEL=nvidia/nemotron-3-super-120b-a12b
 **Ссылка на публично развёрнутое приложение в текущем репозитории не указана.** Доступен локальный запуск по инструкции выше. Адрес `localhost:8501` работает только на компьютере, где запущен Streamlit.
 
 - [Исходный код на GitHub](https://github.com/BAITC-Hacks/hack-8d5054cd-builders).
-- [Версия для рассмотрения — PR №1](https://github.com/BAITC-Hacks/hack-8d5054cd-builders/pull/1).
+- [Актуальная версия — ветка main](https://github.com/BAITC-Hacks/hack-8d5054cd-builders/tree/main).
 - [Презентация PowerPoint](docs/Практикум-защита.pptx).
 - [Сценарий защиты на 5 минут и ответы жюри](docs/СЦЕНАРИЙ-ЗАЩИТЫ.md).
 - [Резюме MVP](docs/РЕЗЮМЕ-MVP.md).
