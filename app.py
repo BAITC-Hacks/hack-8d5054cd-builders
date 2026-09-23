@@ -1,16 +1,15 @@
 from __future__ import annotations
 
 import json
-import os
 from copy import deepcopy
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
 
 import streamlit as st
 
-from src.ai import DEMO_ANSWERS, DEMO_DRAFT, DEMO_MODE, analyze_draft, build_card
-from src.models import CARD_FIELDS, Application, TaskCard, make_id, utc_now
+from src.ai import DEMO_ANSWERS, DEMO_DRAFT, ERROR_LABELS, PROVIDER_LABELS, analyze_draft, build_card, check_connection
+from src.config import get_settings
+from src.models import CARD_FIELDS, Application, TaskCard, is_valid_prototype_url, make_id, utc_now
 from src.rating import calculate_rating
 
 
@@ -63,12 +62,47 @@ def initialize_state() -> None:
 
 
 def _show_ai_mode() -> None:
-    if DEMO_MODE:
-        st.caption("AI: включён локальный демо-сценарий")
-    elif not os.getenv("OPENAI_API_KEY", "").strip():
-        st.caption("AI: локальная заглушка (задайте OPENAI_API_KEY для вызова модели)")
+    settings = get_settings()
+    with st.sidebar.expander("AI и подключение", expanded=True):
+        if st.button("Перечитать .env", key="reload_ai_settings"):
+            st.session_state.ai_provider = "demo" if settings["demo"] else settings["provider"]
+            st.session_state.pop("connection_result", None)
+        if "ai_provider" not in st.session_state:
+            st.session_state.ai_provider = "demo" if settings["demo"] else settings["provider"]
+        selected = st.selectbox(
+            "Источник AI", ["auto", "openai", "nvidia", "demo"],
+            format_func=lambda value: PROVIDER_LABELS[value], key="ai_provider",
+        )
+        for name in ("openai", "nvidia"):
+            status = "ключ добавлен" if settings[f"{name}_ready"] else "ключ не добавлен"
+            st.caption(f"{PROVIDER_LABELS[name]}: {status}")
+            if settings[f"{name}_ready"]:
+                st.caption(settings[f"{name}_model"])
+        if selected == "auto":
+            st.caption("При сбое OpenAI попробуем NVIDIA, затем локальную сборку.")
+        if st.button("Проверить подключение", disabled=selected == "demo", help="Короткий запрос к выбранному API; расходует несколько токенов."):
+            with st.spinner("Проверяем доступ к модели…"):
+                st.session_state.connection_result = check_connection(selected)
+        for item in st.session_state.get("connection_result", {}).get("results", []):
+            label = PROVIDER_LABELS[item["provider"]]
+            if item["ok"]:
+                st.success(f"{label}: запрос выполнен")
+            else:
+                st.warning(f"{label}: {ERROR_LABELS[item['reason']]}")
+        st.caption("Ключи добавляются в локальный .env. Их значения здесь не отображаются.")
+
+
+def _show_ai_result(result: dict[str, Any]) -> None:
+    mode = result.get("mode", "demo")
+    if mode == "demo":
+        if result.get("reason") == "demo_requested":
+            st.info("Используется локальный сценарий без обращения к API.")
+        else:
+            st.warning("Использована локальная сборка: доступный AI не вернул проверенный результат.")
     else:
-        st.caption("AI: OpenAI · при сетевой ошибке включится локальная заглушка")
+        st.success(f"{PROVIDER_LABELS[mode]} · {result.get('model', '')}: ответ проверен по исходному тексту.")
+    for attempt in result.get("attempts", []):
+        st.caption(f"{PROVIDER_LABELS[attempt['provider']]}: {ERROR_LABELS[attempt['reason']]}")
 
 
 def _reset_builder() -> None:
@@ -80,6 +114,8 @@ def _reset_builder() -> None:
     st.session_state.analysis_draft = None
     st.session_state.draft_card = None
     st.session_state.card_source_mode = ""
+    st.session_state.pop("card_result", None)
+    st.session_state.pop("builder_answers", None)
 
 
 def _rating_panel(card: dict[str, Any], *, compact: bool = False) -> dict[str, Any]:
@@ -92,7 +128,7 @@ def _rating_panel(card: dict[str, Any], *, compact: bool = False) -> dict[str, A
     with st.expander("Из чего складывается рейтинг", expanded=False):
         for row in result["breakdown"]:
             st.write(f"**{row['label']}** — {row['earned']} из {row['possible']} баллов")
-        st.caption("Короткий ответ даёт целочисленную половину веса (округление вниз); подробный ответ — полный вес.")
+        st.caption("Это рейтинг заполненности, не экспертиза решения. Пустые поля, известные заглушки и явный мусор дают 0; короткий ответ — половину веса с округлением вниз.")
         st.caption("Пороги подробности: контекст 35, потребность 20, данные 15, результат и критерии 20, ограничения 14, пользователи 10, контакт 5, формат 12 символов.")
 
     if result["improvements"]:
@@ -142,6 +178,7 @@ def render_new_task(owner_id: str) -> None:
             "Черновик задачи",
             key="draft_text",
             height=130,
+            max_chars=8000,
             placeholder="Например: покупатели часто оставляют корзины на сайте; хотим понять причины и улучшить оформление заказа.",
         )
         submitted = st.form_submit_button("Проанализировать", type="primary")
@@ -150,11 +187,14 @@ def render_new_task(owner_id: str) -> None:
         if not draft.strip():
             st.warning("Добавьте хотя бы краткое описание задачи.")
         else:
-            result = analyze_draft(draft.strip())
+            with st.spinner("Находим сведения и уточняющие вопросы…"):
+                result = analyze_draft(draft.strip(), provider=st.session_state.ai_provider)
             st.session_state.analysis = result
             st.session_state.analysis_draft = draft.strip()
             st.session_state.draft_card = None
             st.session_state.card_source_mode = ""
+            st.session_state.pop("card_result", None)
+            st.session_state.builder_answers = {}
             use_sample_answers = (
                 bool(st.session_state.get("use_demo_answers"))
                 and draft.strip() == DEMO_DRAFT.strip()
@@ -163,14 +203,12 @@ def render_new_task(owner_id: str) -> None:
                 field = question["field"]
                 answer_key = f"answer_{index}_{field}"
                 st.session_state[answer_key] = DEMO_ANSWERS.get(field, "") if use_sample_answers else ""
+                st.session_state.builder_answers[answer_key] = st.session_state[answer_key]
 
     analysis = st.session_state.get("analysis")
     current_draft = str(st.session_state.get("draft_text", "")).strip()
     if analysis and current_draft == st.session_state.get("analysis_draft"):
-        if analysis.get("mode") == "demo":
-            st.info("Для этого шага используется локальный демо-сценарий. Он работает без API-ключа и сети.")
-        else:
-            st.success("Черновик проанализирован. Проверьте ответы и дополните их фактами бизнеса.")
+        _show_ai_result(analysis)
 
         missing = analysis.get("missing_fields", [])
         if missing:
@@ -178,12 +216,15 @@ def render_new_task(owner_id: str) -> None:
             if labels:
                 st.caption("Нужно уточнить: " + ", ".join(labels))
 
-        baseline_card = {field: "" for field in CARD_FIELDS}
-        baseline_card["context"] = current_draft
+        baseline_card = analysis.get("card") or {"context": current_draft}
         baseline = calculate_rating(baseline_card)
-        st.markdown("### Стартовая готовность до уточнений")
+        st.markdown("### Предварительная полнота черновика")
         st.metric("Рейтинг черновика", f"{baseline['score']} / 100")
         st.caption(f"Уровень: {baseline['level']}")
+        if analysis.get("baseline_quality") != "extracted":
+            st.caption("Локально распознаются явные поля вида «Данные: …». Свободный текст учитывается как контекст; оценка может быть занижена.")
+        with st.expander("Какие сведения найдены в черновике"):
+            _render_task_contents(baseline_card)
         st.markdown("**Что повысит рейтинг**")
         for item in baseline["improvements"][:4]:
             st.write(f"+{item['potential_points']} · **{item['label']}** — {item['hint']}")
@@ -192,10 +233,14 @@ def render_new_task(owner_id: str) -> None:
             st.subheader("Уточняющие вопросы")
             for index, question in enumerate(analysis["questions"]):
                 field = question["field"]
+                answer_key = f"answer_{index}_{field}"
+                if answer_key not in st.session_state:
+                    st.session_state[answer_key] = st.session_state.get("builder_answers", {}).get(answer_key, "")
                 st.text_area(
                     question["question"],
                     key=f"answer_{index}_{field}",
                     height=90,
+                    max_chars=2000,
                 )
             build_submitted = st.form_submit_button("Сформировать карточку", type="primary")
 
@@ -203,12 +248,15 @@ def render_new_task(owner_id: str) -> None:
             answers_by_field: dict[str, list[str]] = {}
             for index, question in enumerate(analysis["questions"]):
                 answer = str(st.session_state.get(f"answer_{index}_{question['field']}", "")).strip()
+                st.session_state.setdefault("builder_answers", {})[f"answer_{index}_{question['field']}"] = answer
                 if answer:
                     answers_by_field.setdefault(question["field"], []).append(answer)
             answers = {key: "\n".join(values) for key, values in answers_by_field.items()}
-            generated = build_card(current_draft, answers)
+            with st.spinner("Собираем карточку и проверяем источники фактов…"):
+                generated = build_card(current_draft, answers, provider=st.session_state.ai_provider, known_card=baseline_card)
             st.session_state.draft_card = generated["card"]
             st.session_state.card_source_mode = generated["mode"]
+            st.session_state.card_result = generated
             for field in CARD_FIELDS:
                 st.session_state[f"editor_{field}"] = generated["card"].get(field, "")
 
@@ -216,8 +264,7 @@ def render_new_task(owner_id: str) -> None:
             st.divider()
             st.subheader("Проверьте и отредактируйте карточку")
             st.caption("Баллы пересчитываются при каждом изменении. Публикация требует отдельного подтверждения.")
-            if st.session_state.get("card_source_mode") == "demo":
-                st.info("Карточка собрана локально только из черновика и ваших ответов.")
+            _show_ai_result(st.session_state.get("card_result", {"mode": "demo", "reason": "demo_requested"}))
             candidate: dict[str, str] = {}
             field_columns = st.columns(2)
             fields = list(CARD_FIELDS.items())
@@ -233,10 +280,24 @@ def render_new_task(owner_id: str) -> None:
                         st.text_area(label, key=key, height=110)
                 candidate[field] = str(st.session_state.get(key, ""))
 
+            st.session_state.draft_card = dict(candidate)
+            evidence = st.session_state.get("card_result", {}).get("evidence", {})
+            if any(evidence.values()):
+                with st.expander("Источники AI-полей до ручного редактирования"):
+                    for field, entries in evidence.items():
+                        if entries:
+                            st.markdown(f"**{CARD_FIELDS[field]}**")
+                            for entry in entries:
+                                source_label = "Черновик" if entry["source"] == "draft" else "Ответ бизнеса"
+                                st.write(f"{source_label}: {entry['quote']}")
+
             st.markdown("### Текущий рейтинг")
             current_rating = _rating_panel(candidate)
+            st.metric("Изменение полноты карточки", f"{current_rating['score'] - baseline['score']:+d} баллов")
             if st.button("Подтвердить и опубликовать", type="primary", key="publish_task"):
-                if not candidate.get("title", "").strip():
+                if not owner_id:
+                    st.error("Укажите рабочее пространство бизнеса в сайдбаре.")
+                elif not candidate.get("title", "").strip():
                     st.error("Перед публикацией укажите название задачи.")
                 else:
                     card = TaskCard.from_dict(candidate).to_dict()
@@ -255,29 +316,37 @@ def render_new_task(owner_id: str) -> None:
 
 def render_application(task: dict[str, Any], team: dict[str, Any]) -> None:
     task_id = task["id"]
+    form_id = f"{task_id}_{team['id']}"
+    if st.session_state.pop(f"clear_apply_{form_id}", False):
+        for field in ("idea", "plan", "url"):
+            st.session_state[f"apply_{field}_{form_id}"] = ""
+        st.session_state[f"apply_team_{form_id}"] = team["name"]
+    notice = st.session_state.pop(f"apply_notice_{form_id}", None)
+    if notice:
+        st.success(notice)
     with st.expander("Откликнуться на задачу", expanded=False):
-        with st.form(f"application_form_{task_id}"):
-            team_key = f"apply_team_{task_id}"
+        with st.form(f"application_form_{form_id}"):
+            team_key = f"apply_team_{form_id}"
             if team_key not in st.session_state:
                 st.session_state[team_key] = team["name"]
             st.text_input("Название команды", key=team_key)
-            st.text_area("Идея решения", key=f"apply_idea_{task_id}", height=100)
-            st.text_area("План работы", key=f"apply_plan_{task_id}", height=100)
+            st.text_area("Идея решения", key=f"apply_idea_{form_id}", height=100, max_chars=3000)
+            st.text_area("План работы", key=f"apply_plan_{form_id}", height=100, max_chars=3000)
             st.text_input(
                 "Ссылка на прототип (необязательно)",
-                key=f"apply_url_{task_id}",
+                key=f"apply_url_{form_id}",
                 placeholder="https://...",
             )
             submitted = st.form_submit_button("Отправить отклик", type="primary")
         if submitted:
-            team_name = str(st.session_state.get(f"apply_team_{task_id}", "")).strip()
-            idea = str(st.session_state.get(f"apply_idea_{task_id}", "")).strip()
-            plan = str(st.session_state.get(f"apply_plan_{task_id}", "")).strip()
-            url = str(st.session_state.get(f"apply_url_{task_id}", "")).strip()
+            team_name = str(st.session_state.get(team_key, "")).strip()
+            idea = str(st.session_state.get(f"apply_idea_{form_id}", "")).strip()
+            plan = str(st.session_state.get(f"apply_plan_{form_id}", "")).strip()
+            url = str(st.session_state.get(f"apply_url_{form_id}", "")).strip()
             if not team_name or not idea or not plan:
                 st.error("Укажите название команды, идею и план работы.")
-            elif url and urlparse(url).scheme not in {"http", "https"}:
-                st.error("Ссылка на прототип должна начинаться с http:// или https://.")
+            elif not is_valid_prototype_url(url):
+                st.error("Укажите полный адрес прототипа, например https://example.com/prototype.")
             else:
                 application = Application(
                     task_id=task_id,
@@ -285,9 +354,12 @@ def render_application(task: dict[str, Any], team: dict[str, Any]) -> None:
                     idea=idea,
                     plan=plan,
                     prototype_url=url,
+                    team_id=team["id"],
                 ).to_dict()
                 st.session_state.applications.append(application)
-                st.success("Отклик отправлен бизнесу.")
+                st.session_state[f"clear_apply_{form_id}"] = True
+                st.session_state[f"apply_notice_{form_id}"] = "Отклик отправлен бизнесу."
+                st.rerun()
 
 
 def render_catalog(team: dict[str, Any]) -> None:
@@ -355,8 +427,8 @@ def _render_applications(task: dict[str, Any]) -> None:
             left.markdown(f"**Идея:** {application.get('idea', '')}")
             left.markdown(f"**План:** {application.get('plan', '')}")
             prototype = application.get("prototype_url", "")
-            if prototype:
-                left.markdown(f"[Открыть прототип]({prototype})")
+            if prototype and is_valid_prototype_url(prototype):
+                left.link_button("Открыть прототип", prototype)
             if application.get("status") == "pending":
                 choose_col, reject_col, _ = st.columns([1, 1, 4])
                 choose_col.button(
@@ -403,16 +475,21 @@ def render_sidebar() -> tuple[str, str, dict[str, Any] | None]:
     role = st.sidebar.radio("Роль", ["Бизнес", "Студенческая команда"], key="role")
     st.sidebar.divider()
     if role == "Бизнес":
+        if "business_identity" not in st.session_state:
+            st.session_state.business_identity = st.session_state.get("saved_business_identity", "Alem Retail")
         owner_id = st.sidebar.text_input("Рабочее пространство бизнеса", key="business_identity")
+        st.session_state.saved_business_identity = owner_id
         if not owner_id.strip():
-            owner_id = "Alem Retail"
             st.sidebar.caption("Укажите имя компании, чтобы видеть её задачи.")
         st.sidebar.caption("Имя используется для списка «Мои задачи», это не аккаунт.")
         team = None
     else:
         teams = st.session_state.teams
         names = [item["name"] for item in teams]
+        if "active_team" not in st.session_state:
+            st.session_state.active_team = st.session_state.get("saved_active_team", names[0])
         team_name = st.sidebar.selectbox("Выберите команду", names, key="active_team")
+        st.session_state.saved_active_team = team_name
         team = next(item for item in teams if item["name"] == team_name)
         st.sidebar.markdown("**Интересы**  \n" + ", ".join(team.get("interests", [])))
         st.sidebar.markdown("**Навыки**  \n" + ", ".join(team.get("skills", [])))
@@ -420,6 +497,7 @@ def render_sidebar() -> tuple[str, str, dict[str, Any] | None]:
         owner_id = ""
     st.sidebar.divider()
     _show_ai_mode()
+    st.sidebar.caption("Для демо переключайте роли в одной вкладке. Данные хранятся в этой сессии браузера.")
     return role, owner_id.strip(), team
 
 

@@ -6,6 +6,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
+from urllib.parse import urlsplit
 
 
 CARD_FIELDS: dict[str, str] = {
@@ -30,6 +31,22 @@ def make_id(prefix: str) -> str:
 
 def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def is_valid_prototype_url(value: str) -> bool:
+    if not value:
+        return True
+    if any(char.isspace() for char in value):
+        return False
+    try:
+        parsed = urlsplit(value)
+        return (
+            parsed.scheme in {"http", "https"} and bool(parsed.hostname)
+            and parsed.username is None and parsed.password is None
+            and (parsed.port is None or 0 < parsed.port <= 65535)
+        )
+    except ValueError:
+        return False
 
 
 @dataclass
@@ -73,6 +90,7 @@ class Application:
     idea: str
     plan: str
     prototype_url: str = ""
+    team_id: str = ""
     id: str = field(default_factory=lambda: make_id("application"))
     status: str = "pending"
     created_at: str = field(default_factory=utc_now)

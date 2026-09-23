@@ -1,7 +1,13 @@
 .env
+.env.*
+!.env.example
 .venv/
 venv/
 __pycache__/
 *.py[cod]
 .streamlit/secrets.toml
 .pytest_cache/
+work/
+outputs/
+hack-8d5054cd-builders/
+*.log

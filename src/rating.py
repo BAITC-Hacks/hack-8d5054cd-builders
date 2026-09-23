@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from .models import CARD_FIELDS
@@ -57,24 +58,68 @@ IMPROVEMENT_HINTS: dict[str, str] = {
 }
 
 PLACEHOLDERS = {
-    "-",
-    "—",
-    "н/д",
+    "н д",
+    "n a",
+    "tbd",
+    "todo",
     "не указано",
     "неизвестно",
     "пока неизвестно",
     "уточняется",
     "нет данных",
+    "нет информации",
+    "не определено",
+    "не предоставлено",
+    "не знаю",
+    "не знаем",
 }
+
+# Только узнаваемые заглушки, без попытки оценить смысл или качество ответа.
+# Полное совпадение сохраняет полезные дополнения: «Данных нет, соберём опрос».
+DEFERRED_ANSWER = re.compile(
+    r"(?:(?:данные|контакт|сроки|критерии|информацию|это) )?"
+    r"(?:уточним|уточню|уточнить|определим|добавим|сообщим|обсудим|согласуем)"
+    r"(?: (?:позже|потом|позднее|впоследствии))?"
+    r"(?: (?:после встречи|на встрече|после созвона|на созвоне|"
+    r"после обсуждения|после согласования))?"
+    r"(?: с бизнесом)?"
+)
 
 
 def _clean_text(value: Any) -> str:
-    return " ".join(str(value or "").split()).strip()
+    # Значение поля карточки — текст. Объект/список из некорректного AI JSON
+    # не должен превращаться в заполненное поле через str(value).
+    if not isinstance(value, str):
+        return ""
+    return " ".join(value.split()).strip()
+
+
+def _is_empty_answer(text: str) -> bool:
+    # Пунктуация и регистр не меняют статус «Не указано.» или «Н/Д».
+    words = re.findall(r"[^\W_]+", text.casefold(), flags=re.UNICODE)
+    normalized = " ".join(words)
+    if not normalized or normalized in PLACEHOLDERS:
+        return True
+    if DEFERRED_ANSWER.fullmatch(normalized):
+        return True
+
+    compact = "".join(words)
+    if re.fullmatch(r"(.)\1{3,}", compact):
+        return True
+    # Простой повтор короткого фрагмента и известные клавиатурные заглушки.
+    if re.fullmatch(r"(.{2,3})\1{2,}", compact):
+        return True
+    if compact in {"asdf", "asdfgh", "qwer", "qwerty", "qwertyuiop", "йцукен", "йцукенгшщз", "фыва", "фывапр"}:
+        return True
+    # Адреса и ссылки могут законно повторять имя: team@team.team.
+    if "@" not in text and "://" not in text and len(words) > 1 and len(set(words)) == 1:
+        return True
+    return False
 
 
 def _earned_points(field: str, value: Any) -> int:
     text = _clean_text(value)
-    if not text or text.casefold() in PLACEHOLDERS:
+    if not text or _is_empty_answer(text):
         return 0
     weight = FIELD_WEIGHTS[field]
     if len(text) < MIN_DETAIL_LENGTH[field]:
@@ -86,7 +131,8 @@ def calculate_rating(card: dict[str, Any]) -> dict[str, Any]:
     """Вернуть балл, уровень, расшифровку и улучшения для карточки.
 
     Функция чистая: результат зависит только от переданных полей, не меняет
-    карточку и не обращается к Streamlit, файлам, AI или сети.
+    карточку и не обращается к Streamlit, файлам, AI или сети. Проверяются
+    заполненность, длина и явные заглушки, а не смысловое качество сведений.
     """
     per_field = {
         field: _earned_points(field, card.get(field, ""))
