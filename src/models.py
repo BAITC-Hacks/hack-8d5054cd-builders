@@ -98,6 +98,8 @@ class Application:
     id: str = field(default_factory=lambda: make_id("application"))
     status: str = "pending"
     created_at: str = field(default_factory=utc_now)
+    # At the end to preserve older positional arguments and saved proposals.
+    timeline: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

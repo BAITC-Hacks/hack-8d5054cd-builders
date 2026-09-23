@@ -13,7 +13,7 @@ from src.catalog import ALL_READINESS, ALL_TOPICS, READINESS_LEVELS, TOPICS, cat
 from src.models import CARD_FIELDS, Application, TaskCard, is_valid_prototype_url, make_id, utc_now
 from src.rating import calculate_rating
 from src.progress_ui import render_business_progress, render_team_applications, render_team_dashboard, render_team_projects
-from src.ui import apply_ui, page_header, status_badge, stepper, summary_card
+from src.ui import apply_ui, brand, page_header, rating_breakdown, readiness_track, status_badge, stepper, summary_card
 
 
 ROOT = Path(__file__).resolve().parent
@@ -161,8 +161,11 @@ def _reset_builder() -> None:
 def _rating_panel(card: dict[str, Any], *, compact: bool = False, preview: bool = False) -> dict[str, Any]:
     result = calculate_rating(card)
     st.metric("Предпросмотр рейтинга" if preview else "Подтверждённый рейтинг", f"{result['score']} / 100")
-    status_badge(result["level"], "success" if result["score"] >= 70 else "warning")
     st.progress(result["score"] / 100)
+    if not compact:
+        readiness_track(result["score"])
+    else:
+        status_badge(result["level"], "success" if result["score"] >= 70 else "warning")
     target = next_readiness_target(result["score"])
     if target and target["points_needed"]:
         st.caption(f"До уровня «{target['label']}»: {target['points_needed']} баллов.")
@@ -170,8 +173,7 @@ def _rating_panel(card: dict[str, Any], *, compact: bool = False, preview: bool 
         st.caption("Предварительно. Баллы появятся в каталоге после подтверждения.")
 
     with st.expander("Из чего складывается рейтинг", expanded=False):
-        for row in result["breakdown"]:
-            st.write(f"**{row['label']}** — {row['earned']} из {row['possible']} баллов")
+        rating_breakdown(result["breakdown"])
         st.caption("Это рейтинг заполненности, не экспертиза решения. Пустые поля, известные заглушки и явный мусор дают 0; короткий ответ — половину веса с округлением вниз.")
         st.caption("Пороги подробности: контекст 35, потребность 20, данные 15, результат и критерии 20, ограничения 14, пользователи 10, контакт 5, формат 12 символов.")
 
@@ -276,7 +278,7 @@ def render_new_task(owner_id: str) -> None:
     if step == "draft":
         if "draft_text" not in st.session_state:
             st.session_state.draft_text = st.session_state.saved_draft_text
-        with st.container(border=True):
+        with st.container(border=True, key="surface_draft"):
             draft = st.text_area("Какая помощь нужна вашему бизнесу?", key="draft_text", height=190, max_chars=8000,
                                  on_change=_remember_draft,
                                  placeholder="Например: покупатели часто оставляют корзины на сайте. Хотим понять причины и упростить оформление заказа.")
@@ -416,8 +418,8 @@ def render_new_task(owner_id: str) -> None:
                             st.write(f"{'Черновик' if entry['source'] == 'draft' else 'Ответ бизнеса'}: {entry['quote']}")
         _show_ai_result(st.session_state.get("card_result", {"mode": "demo", "reason": "demo_requested"}))
     with score_column:
-        with st.container(border=True):
-            st.markdown("**Готовность к работе**")
+        with st.container(border=True, key="surface_score"):
+            st.markdown("**Паспорт готовности**")
             current_rating = _rating_panel(candidate, preview=True)
             st.metric("Изменение полноты карточки", f"{current_rating['score'] - baseline['score']:+d} баллов")
             st.caption("Можно опубликовать и неполную карточку, затем дополнить её.")
@@ -445,7 +447,7 @@ def render_application(task: dict[str, Any], team: dict[str, Any]) -> None:
     task_id = task["id"]
     form_id = f"{task_id}_{team['id']}"
     if st.session_state.pop(f"clear_apply_{form_id}", False):
-        for field in ("idea", "plan", "url"):
+        for field in ("idea", "plan", "timeline", "url"):
             st.session_state[f"apply_{field}_{form_id}"] = ""
         st.session_state[f"apply_team_{form_id}"] = team["name"]
     notice = st.session_state.pop(f"apply_notice_{form_id}", None)
@@ -461,6 +463,8 @@ def render_application(task: dict[str, Any], team: dict[str, Any]) -> None:
                          placeholder="Что вы предлагаете сделать и какую пользу это принесёт?")
             st.text_area("План работы", key=f"apply_plan_{form_id}", height=100, max_chars=3000,
                          placeholder="С чего начнёте? Какие основные шаги пройдёте?")
+            st.text_input("Предлагаемый срок", key=f"apply_timeline_{form_id}", max_chars=160,
+                          placeholder="Например, прототип за 2 недели после согласования задачи")
             st.text_input(
                 "Ссылка на прототип (необязательно)",
                 key=f"apply_url_{form_id}",
@@ -472,9 +476,12 @@ def render_application(task: dict[str, Any], team: dict[str, Any]) -> None:
             team_name = team["name"]
             idea = str(st.session_state.get(f"apply_idea_{form_id}", "")).strip()
             plan = str(st.session_state.get(f"apply_plan_{form_id}", "")).strip()
+            timeline = str(st.session_state.get(f"apply_timeline_{form_id}", "")).strip()
             url = str(st.session_state.get(f"apply_url_{form_id}", "")).strip()
             if not team_name or not idea or not plan:
                 st.error("Укажите название команды, идею и план работы.")
+            elif not timeline:
+                st.error("Укажите предлагаемый срок, чтобы бизнес мог сравнить предложения.")
             elif not is_valid_prototype_url(url):
                 st.error("Укажите полный адрес прототипа, например https://example.com/prototype.")
             else:
@@ -485,6 +492,7 @@ def render_application(task: dict[str, Any], team: dict[str, Any]) -> None:
                     plan=plan,
                     prototype_url=url,
                     team_id=team["id"],
+                    timeline=timeline,
                 ).to_dict()
                 st.session_state.applications.append(application)
                 st.session_state[f"clear_apply_{form_id}"] = True
@@ -498,7 +506,7 @@ def render_catalog(team: dict[str, Any]) -> None:
     if not all_tasks:
         st.info("Пока нет опубликованных задач.")
         return
-    with st.container(border=True):
+    with st.container(border=True, key="surface_filters"):
         topic_col, level_col = st.columns(2)
         topic = topic_col.selectbox("Тема", (ALL_TOPICS, *TOPICS), key="catalog_topic")
         readiness = level_col.selectbox("Готовность", (ALL_READINESS, *READINESS_LEVELS), key="catalog_readiness")
@@ -513,7 +521,7 @@ def render_catalog(team: dict[str, Any]) -> None:
     positions = {task["id"]: index for index, task in enumerate(all_tasks, 1)}
     for task in tasks:
         rating = calculate_rating(task)
-        with st.container(border=True):
+        with st.container(border=True, key=f"surface_catalog_{task['id']}"):
             st.caption(f"{task['topic']} · {task.get('owner_id') or 'Компания не указана'}")
             st.subheader(task.get("title") or "Задача без названия")
             status_badge(f"{rating['score']} / 100 · {rating['level']}", "success" if rating['score'] >= 70 else "warning")
@@ -554,12 +562,18 @@ def _render_edit_form(task: dict[str, Any]) -> None:
             if not updated["title"].strip():
                 st.error("Название карточки не может быть пустым.")
             else:
+                previous_rating = calculate_rating(task)["score"]
+                previous_rank, _ = catalog_position(st.session_state.tasks, task['id'])
                 task.update(updated)
                 task["rating"] = calculate_rating(task)["score"]
                 task["topic"] = st.session_state[topic_key]
                 task["confirmed_at"] = utc_now()
                 rank, total = catalog_position(st.session_state.tasks, task['id'])
-                st.session_state[notice_key] = f"Изменения подтверждены. Новый рейтинг: {task['rating']} / 100. Место в общем каталоге: {rank} из {total}."
+                st.session_state[notice_key] = (
+                    f"Изменения подтверждены. Рейтинг: {previous_rating} → {task['rating']} / 100 "
+                    f"({task['rating'] - previous_rating:+d} баллов). "
+                    f"Место в общем каталоге: {previous_rank} → {rank} из {total}."
+                )
                 st.rerun()
     if st.session_state.get(notice_key):
         st.success(st.session_state.pop(notice_key))
@@ -576,7 +590,8 @@ def _render_applications(task: dict[str, Any]) -> None:
         with st.expander("Сравнить предложения в таблице", expanded=False):
             status_labels = {"pending": "На рассмотрении", "selected": "Выбрана", "rejected": "Отклонена"}
             st.dataframe([{"Команда": app["team_name"], "Идея": app.get("idea", ""),
-                           "План": app.get("plan", ""), "Статус": status_labels.get(app.get("status"), "На рассмотрении")}
+                           "План": app.get("plan", ""), "Срок": app.get("timeline") or "Не указан",
+                           "Статус": status_labels.get(app.get("status"), "На рассмотрении")}
                           for app in applications], hide_index=True, use_container_width=True)
     for application in applications:
         with st.container(border=True):
@@ -587,6 +602,7 @@ def _render_applications(task: dict[str, Any]) -> None:
             st.write(application.get("idea", ""))
             with st.expander("План команды"):
                 st.write(application.get("plan", ""))
+                st.write("Предлагаемый срок: " + (application.get("timeline") or "Не указан"))
             prototype = application.get("prototype_url", "")
             if prototype and is_valid_prototype_url(prototype):
                 st.link_button("Открыть прототип", prototype)
@@ -631,7 +647,7 @@ def render_my_tasks(owner_id: str) -> None:
     st.divider()
     for index, task in enumerate(tasks):
         rating = calculate_rating(task)
-        with st.container(border=True):
+        with st.container(border=True, key=f"surface_business_{task['id']}"):
             st.subheader(task.get("title") or "Задача без названия")
             rank, total = catalog_position(st.session_state.tasks, task["id"])
             st.caption(f"{task['topic']} · №{rank} из {total} в общем каталоге")
@@ -657,8 +673,8 @@ def _open_new_task() -> None:
 
 
 def render_sidebar() -> tuple[str, str, dict[str, Any] | None]:
-    st.sidebar.title("Практикум")
-    st.sidebar.caption("Бизнес-задачи и студенческие команды")
+    with st.sidebar:
+        brand()
     role = st.sidebar.radio("Я представляю", ["Бизнес", "Студенческая команда"], key="role")
     if role == "Бизнес":
         if "business_identity" not in st.session_state:

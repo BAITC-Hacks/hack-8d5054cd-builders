@@ -144,7 +144,7 @@ def render_team_projects(team: dict[str, Any]) -> None:
         st.button("Перейти в каталог", key=f"projects_browse_{team['id']}", on_click=_open_team_page, args=("Каталог",), type="primary")
         return
     for task in tasks:
-        with st.container(border=True):
+        with st.container(border=True, key=f"surface_project_{task['id']}"):
             st.subheader(task.get("title") or "Задача без названия")
             st.caption(f"Бизнес: {task.get('owner_id', '')}")
             stages = project_stages(_submissions(), task["id"], team["id"])
@@ -210,7 +210,7 @@ def render_team_applications(team: dict[str, Any]) -> None:
     tasks = {task["id"]: task for task in st.session_state.tasks}
     for application in applications:
         task = tasks.get(application.get("task_id"), {})
-        with st.container(border=True):
+        with st.container(border=True, key=f"surface_application_{application['id']}"):
             st.subheader(task.get("title") or "Задача недоступна")
             status = application.get("status", "pending")
             status_badge(APPLICATION_LABELS.get(status, "На рассмотрении"), STATUS_TONES.get(status, "neutral"))
@@ -219,6 +219,7 @@ def render_team_applications(team: dict[str, Any]) -> None:
             st.write(application.get("idea", ""))
             with st.expander("План и прототип"):
                 st.write(application.get("plan", ""))
+                st.write("Предлагаемый срок: " + (application.get("timeline") or "Не указан"))
                 _safe_link(application.get("prototype_url", ""), "Открыть прототип")
             if status == "selected":
                 st.success("Можно приступать к работе. Следующий шаг — в проекте.")

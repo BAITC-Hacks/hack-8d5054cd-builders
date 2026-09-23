@@ -3,7 +3,7 @@
 import unittest
 from unittest.mock import patch
 
-from src.ui import format_date, page_header, status_badge, summary_card
+from src.ui import format_date, page_header, rating_breakdown, readiness_track, status_badge, summary_card
 
 
 class UiHtmlTests(unittest.TestCase):
@@ -66,6 +66,29 @@ class UiDateTests(unittest.TestCase):
         for value in (None, "", "  ", "неизвестно", "2026-02-30", "<script>bad()</script>", 10):
             with self.subTest(value=value):
                 self.assertEqual(format_date(value), "Дата не указана")
+
+
+class RatingPresentationTests(unittest.TestCase):
+    @patch("src.ui.st.html")
+    def test_readiness_thresholds_have_exactly_one_current_level(self, render):
+        for score, label in ((0, "Черновик"), (39, "Черновик"), (40, "Рабочая"),
+                             (69, "Рабочая"), (70, "Готовая"), (89, "Готовая"),
+                             (90, "Приоритетная"), (100, "Приоритетная")):
+            with self.subTest(score=score):
+                readiness_track(score)
+                html = render.call_args.args[0]
+                self.assertEqual(html.count('aria-current="step"'), 1)
+                self.assertIn(f'aria-current="step"><strong>{label}</strong>', html)
+
+    @patch("src.ui.st.html")
+    def test_breakdown_is_escaped_and_has_numeric_accessible_bars(self, render):
+        rating_breakdown([{"label": '<img src=x> & "данные"', "earned": 10, "possible": 20}])
+        html = render.call_args.args[0]
+        self.assertNotIn("<img", html)
+        self.assertIn("&lt;img src=x&gt;", html)
+        self.assertIn('aria-valuenow="10"', html)
+        self.assertIn('aria-valuemax="20"', html)
+        self.assertIn("width:50.0%", html)
 
 
 if __name__ == "__main__":

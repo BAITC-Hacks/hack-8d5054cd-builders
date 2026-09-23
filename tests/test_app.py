@@ -80,9 +80,10 @@ class AppTests(unittest.TestCase):
         self.assertEqual(len(headers), 1, "Each page should have a single clear heading")
         return headers[0]
 
-    def application_fields(self, form_id, *, idea="Построим воронку оформления заказа", plan="Проверим события, найдём узкие места и подготовим прототип", url=""):
+    def application_fields(self, form_id, *, idea="Построим воронку оформления заказа", plan="Проверим события, найдём узкие места и подготовим прототип", timeline="Прототип за 2 недели", url=""):
         self.app.text_area(key=f"apply_idea_{form_id}").set_value(idea)
         self.app.text_area(key=f"apply_plan_{form_id}").set_value(plan)
+        self.app.text_input(key=f"apply_timeline_{form_id}").set_value(timeline)
         self.app.text_input(key=f"apply_url_{form_id}").set_value(url)
 
     def test_complete_demo_from_draft_to_manual_team_selection(self):
@@ -227,6 +228,26 @@ class AppTests(unittest.TestCase):
         self.assertEqual(updated["rating"], 100)
         self.assertEqual(updated["data"], "История продаж и остатков товаров в CSV за два года.")
         self.assertTrue(any("100 / 100" in notice.value for notice in self.app.success))
+        self.assertTrue(any("80 → 100" in notice.value and "3 → 2" in notice.value for notice in self.app.success))
+
+    def test_proposal_requires_timeline_and_preserves_it_for_both_roles(self):
+        self.select_role("Студенческая команда")
+        form_id = "seed_task_1_seed_team_1"
+        initial_count = len(self.app.session_state.applications)
+        self.application_fields(form_id, timeline="")
+        self.submit_form(f"application_form_{form_id}", "Отправить отклик")
+        self.assertEqual(len(self.app.session_state.applications), initial_count)
+        self.assertTrue(any("предлагаемый срок" in error.value for error in self.app.error))
+        self.application_fields(form_id, timeline="Прототип через 14 дней после старта")
+        self.submit_form(f"application_form_{form_id}", "Отправить отклик")
+        self.assertEqual(self.app.session_state.applications[-1]["timeline"], "Прототип через 14 дней после старта")
+        self.assertEqual(self.app.text_input(key=f"apply_timeline_{form_id}").value, "")
+        self.app.sidebar.radio(key="team_page").set_value("Мои отклики").run()
+        self.assert_no_app_errors()
+        self.assertTrue(any("Прототип через 14 дней" in item.value for item in self.app.markdown))
+        self.select_role("Бизнес")
+        self.select_business_page("Мои задачи")
+        self.assertTrue(any("Прототип через 14 дней" in item.value for item in self.app.markdown))
 
     def test_invalid_prototype_urls_do_not_create_applications(self):
         self.select_role("Студенческая команда")

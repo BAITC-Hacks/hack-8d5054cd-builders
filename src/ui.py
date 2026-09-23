@@ -211,9 +211,104 @@ def apply_ui() -> None:
         .ui-summary.ui-danger { border-color: #e7cfcc; }
         .ui-summary h3 { margin: 0 0 .35rem; padding: 0; color: inherit; font-size: 1rem; }
         .ui-summary p { margin: 0; font-size: .95rem; line-height: 1.65; white-space: pre-line; overflow-wrap: anywhere; }
+        /* Final presentation layer: white surfaces, restrained teal, clear hierarchy. */
+        .stApp [data-testid="stMain"] {
+            background-image: radial-gradient(ellipse at 95% 0%, rgba(15,118,110,.055), transparent 45%);
+        }
+        .stApp .block-container { max-width: 1180px; }
+        .stApp .ui-page-header { padding-bottom: .7rem; margin-bottom: .9rem; }
+        .stApp .ui-page-header h1 {
+            font-size: clamp(1.85rem, 3.2vw, 2.6rem);
+            letter-spacing: -.045em;
+            font-weight: 720;
+            line-height: 1.16;
+            max-width: 920px;
+        }
+        .stApp .ui-eyebrow {
+            color: #0f766e;
+            opacity: 1;
+            font-size: .73rem;
+            letter-spacing: .12em;
+            margin-bottom: .85rem;
+        }
+        .stApp .ui-page-description { max-width: 660px; }
+        .stApp [data-testid="stVerticalBlock"][class*="st-key-surface_"] {
+            background: #fff;
+            color: #263b47;
+            border: 1px solid #e0e8e5;
+            border-radius: 20px;
+            padding: 1.5rem;
+            box-shadow: 0 4px 20px rgba(26,59,48,.035);
+        }
+        .stApp [data-testid="stVerticalBlock"].st-key-surface_score {
+            border-top: 3px solid #0f766e;
+        }
+        .stApp [data-testid="stVerticalBlock"].st-key-surface_filters { padding: 1rem 1.25rem; }
+        .stApp [data-testid="stForm"] { border: 0; padding: 0; }
+        .stApp [data-testid="stTextAreaRootElement"],
+        .stApp [data-testid="stTextInputRootElement"] {
+            border: 1px solid #dbe4e0;
+            border-radius: 11px;
+            background: #f8faf9;
+            color: #263b47;
+        }
+        .stApp [data-testid="stTextAreaRootElement"]:focus-within,
+        .stApp [data-testid="stTextInputRootElement"]:focus-within {
+            border-color: #0f766e;
+            box-shadow: 0 0 0 3px rgba(15,118,110,.1);
+        }
+        .stApp [data-testid="stExpander"] details {
+            border-color: #e0e8e5;
+            background: rgba(255,255,255,.45);
+            border-radius: 13px;
+        }
+        .stApp [data-testid="stExpander"] summary { font-weight: 550; }
+        .stApp [data-testid="stBaseButton-primary"],
+        .stApp [data-testid="stBaseButton-primaryFormSubmit"] {
+            border: 1px solid #0f766e;
+            background: #0f766e;
+            color: #fff;
+            box-shadow: 0 3px 8px rgba(15,118,110,.12);
+        }
+        .stApp [data-testid="stBaseButton-primary"]:hover,
+        .stApp [data-testid="stBaseButton-primaryFormSubmit"]:hover { background: #115e59; border-color: #115e59; }
+        .stApp [data-testid="stSidebar"] { border-color: #e0e8e5; }
+        .stApp [data-testid="stSidebar"] [data-testid="stRadio"] label:has(input:checked) {
+            background: #eaf4ef;
+            border-color: transparent;
+        }
+        .ui-brand { display: flex; gap: .75rem; align-items: center; margin: .5rem 0 1.6rem; }
+        .ui-brand-mark {
+            display: grid; place-items: center; flex: 0 0 42px; height: 42px;
+            background: #0f766e; color: #fff; border-radius: 13px;
+            font-size: 1.35rem; font-weight: 700;
+            box-shadow: 0 4px 10px rgba(15,118,110,.12);
+        }
+        .ui-brand-title { font-size: 1.3rem; font-weight: 750; letter-spacing: -.04em; }
+        .ui-brand-note { font-size: .75rem; opacity: .75; margin-top: .12rem; }
+        .stApp .ui-stepper { gap: .5rem; margin: 0 0 1.2rem; }
+        .ui-step { padding: .85rem; border-color: #e0e8e5; border-radius: 12px; font-size: .84rem; }
+        .ui-step-current { background: #eaf4ef; border-color: #7fb5a7; }
+        .ui-step-number { width: 26px; height: 26px; font-size: .78rem; }
+        .ui-readiness {
+            display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: .4rem;
+            margin: .25rem 0 .4rem;
+        }
+        .ui-readiness-item { padding: .55rem .65rem; border-left: 2px solid #dce5e0; color: #61746b; font-size: .75rem; }
+        .ui-readiness-item strong { display: block; font-size: .8rem; }
+        .ui-readiness-active { border-color: #0f766e; background: #edf6f1; color: #115e59; border-radius: 0 7px 7px 0; }
+        .ui-breakdown-row { margin-bottom: .85rem; }
+        .ui-breakdown-label { display: flex; justify-content: space-between; gap: .8rem; font-size: .84rem; margin-bottom: .35rem; }
+        .ui-breakdown-label strong { white-space: nowrap; font-variant-numeric: tabular-nums; }
+        .ui-breakdown-track { height: 6px; border-radius: 8px; background: #e7eeea; overflow: hidden; }
+        .ui-breakdown-fill { height: 100%; border-radius: 8px; background: #0f766e; }
+        .ui-badge { border-radius: 7px; padding: .35rem .7rem; }
+        .ui-summary { padding: 1.35rem; border-radius: 16px; }
+        .stApp [data-testid="stMetricValue"] { font-variant-numeric: tabular-nums; letter-spacing: -.035em; }
         @media (max-width: 850px) {
             .stApp .block-container { padding-left: 1.25rem; padding-right: 1.25rem; }
             .ui-step { flex-basis: 160px; }
+            .stApp [data-testid="stVerticalBlock"][class*="st-key-surface_"] { padding: 1.1rem; }
         }
         @media (prefers-reduced-motion: reduce) {
             .ui-step, .ui-badge, .ui-summary { transition: none; }
@@ -221,6 +316,45 @@ def apply_ui() -> None:
         </style>
         """
     )
+
+
+def brand() -> None:
+    """Show the product wordmark without a competing page heading."""
+    st.html(
+        '<div class="ui-brand"><span class="ui-brand-mark" aria-hidden="true">П</span>'
+        '<div><div class="ui-brand-title">Практикум</div>'
+        '<div class="ui-brand-note">Бизнес-задачи. Опыт в деле.</div></div></div>'
+    )
+
+
+def readiness_track(score: int) -> None:
+    """Display the four fixed readiness thresholds without changing the score."""
+    value = max(0, min(int(score), 100))
+    levels = ((0, 39, "Черновик"), (40, 69, "Рабочая"), (70, 89, "Готовая"), (90, 100, "Приоритетная"))
+    items = []
+    for lower, upper, label in levels:
+        current = lower <= value <= upper
+        css = " ui-readiness-active" if current else ""
+        aria = ' aria-current="step"' if current else ""
+        items.append(f'<div class="ui-readiness-item{css}"{aria}><strong>{label}</strong>{lower}–{upper} баллов</div>')
+    st.html('<div class="ui-readiness" aria-label="Уровни готовности">' + "".join(items) + "</div>")
+
+
+def rating_breakdown(rows: Sequence[dict]) -> None:
+    """Render score components with visible numbers and accessible progress bars."""
+    items = []
+    for row in rows:
+        possible = max(1, int(row["possible"]))
+        earned = max(0, min(int(row["earned"]), possible))
+        label = _text(row["label"])
+        items.append(
+            '<div class="ui-breakdown-row"><div class="ui-breakdown-label">'
+            f'<span>{label}</span><strong>{earned} / {possible}</strong></div>'
+            f'<div class="ui-breakdown-track" role="progressbar" aria-label="{label}" '
+            f'aria-valuenow="{earned}" aria-valuemin="0" aria-valuemax="{possible}">'
+            f'<div class="ui-breakdown-fill" style="width:{earned / possible * 100:.1f}%"></div></div></div>'
+        )
+    st.html('<div class="ui-breakdown">' + "".join(items) + "</div>")
 
 
 def page_header(eyebrow: str, title: str, description: str = "") -> None:

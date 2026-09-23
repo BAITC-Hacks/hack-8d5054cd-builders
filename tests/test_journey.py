@@ -65,6 +65,7 @@ class JourneyTests(unittest.TestCase):
         form = f"{task_id}_{team_id}"
         self.app.text_area(key=f"apply_idea_{form}").set_value("Покажем причины проблемы и подготовим проверяемое решение.")
         self.app.text_area(key=f"apply_plan_{form}").set_value("Согласуем план, проверим прототип, передадим результат бизнесу.")
+        self.app.text_input(key=f"apply_timeline_{form}").set_value("Прототип за 2 недели, результат за 4 недели")
         self.app.text_input(key=f"apply_url_{form}").set_value("https://example.org/prototype")
         self.click(key=f"FormSubmitter:application_form_{form}-Отправить отклик")
         return dict(self.app.session_state.applications[-1])
