@@ -1,0 +1,46 @@
+{
+  "scenario": "synthetic demo only",
+  "analysis_mode": "openai",
+  "analysis_reason": "",
+  "question_count": 8,
+  "questions": [
+    {
+      "field": "title",
+      "question": "Какое название вы хотите дать этой задаче?"
+    },
+    {
+      "field": "users",
+      "question": "Кто будет работать с решением по сокращению незавершённых заказов?"
+    },
+    {
+      "field": "data",
+      "question": "Какие данные о незавершённых заказах у вас уже есть?"
+    },
+    {
+      "field": "constraints",
+      "question": "Есть ли какие-либо ограничения по времени или ресурсам для этой задачи?"
+    },
+    {
+      "field": "expected_result",
+      "question": "Какой конкретный результат вы ожидаете от решения этой проблемы?"
+    },
+    {
+      "field": "success_criteria",
+      "question": "Как вы будете проверять успешность решения проблемы с незавершёнными заказами?"
+    },
+    {
+      "field": "contact",
+      "question": "Кто будет основным контактным лицом по этой задаче?"
+    },
+    {
+      "field": "collaboration_format",
+      "question": "Как вы планируете взаимодействовать и получать обратную связь по этой задаче?"
+    }
+  ],
+  "analysis_score": 20,
+  "build_mode": "openai",
+  "build_reason": "",
+  "card_score": 100,
+  "evidence_fields": 10,
+  "seconds": 11.0
+}
